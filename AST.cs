@@ -8,7 +8,7 @@ namespace Shelltrac
         public int Column { get; }
         public string Context { get; }
         public string ScriptName { get; }
-        
+
         public SourceLocation(int line, int column, string context = "", string scriptName = "")
         {
             Line = line;
@@ -16,7 +16,7 @@ namespace Shelltrac
             Context = context;
             ScriptName = scriptName;
         }
-        
+
         public SourceLocation(Stmt statement, string scriptName = "")
         {
             Line = statement.Line;
@@ -24,7 +24,7 @@ namespace Shelltrac
             Context = $"{statement.GetType().Name} at line {Line}";
             ScriptName = scriptName;
         }
-        
+
         public SourceLocation(Expr expression, string scriptName = "")
         {
             Line = expression.Line;
@@ -32,22 +32,20 @@ namespace Shelltrac
             Context = $"{expression.GetType().Name} at line {Line}";
             ScriptName = scriptName;
         }
-        
+
         public override string ToString()
         {
             string location = !string.IsNullOrEmpty(ScriptName) ? $"{ScriptName}:" : "";
             return $"{location}{Line}:{Column} ({Context})";
         }
     }
-    
 
-public abstract class Stmt 
-{ 
-    public int Line { get; set; }
-    public int Column { get; set; }
-    public int Length { get; set; }
-}
-
+    public abstract class Stmt
+    {
+        public int Line { get; set; }
+        public int Column { get; set; }
+        public int Length { get; set; }
+    }
 
     public class ProgramNode
     {
@@ -223,12 +221,12 @@ public abstract class Stmt
 
     // ----- Expressions -----
 
-    public abstract class Expr 
-{ 
-    public int Line { get; set; }
-    public int Column { get; set; } 
-    public int Length { get; set; }
-}
+    public abstract class Expr
+    {
+        public int Line { get; set; }
+        public int Column { get; set; }
+        public int Length { get; set; }
+    }
 
     public class LiteralExpr : Expr
     {

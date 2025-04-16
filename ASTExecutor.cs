@@ -11,204 +11,204 @@ using System.Threading.Tasks;
 
 namespace Shelltrac
 {
-
-
-    
-
-public class ExecutionScope
-{
-    // Variable storage
-    public Dictionary<string, object?> Variables { get; } = new Dictionary<string, object?>();
-    
-    // Execution tracking
-    public SourceLocation Location { get; set; }
-    
-    public ExecutionScope(SourceLocation location, Dictionary<string, object?>? parentVariables = null)
+    public class ExecutionScope
     {
-        Location = location;
-        
-        // Optionally inherit variables from parent scope
-        if (parentVariables != null)
+        // Variable storage
+        public Dictionary<string, object?> Variables { get; } = new Dictionary<string, object?>();
+
+        // Execution tracking
+        public SourceLocation Location { get; set; }
+
+        public ExecutionScope(
+            SourceLocation location,
+            Dictionary<string, object?>? parentVariables = null
+        )
         {
-            foreach (var kvp in parentVariables)
+            Location = location;
+
+            // Optionally inherit variables from parent scope
+            if (parentVariables != null)
             {
-                Variables[kvp.Key] = kvp.Value;
+                foreach (var kvp in parentVariables)
+                {
+                    Variables[kvp.Key] = kvp.Value;
+                }
             }
         }
     }
-}
 
-public class ExecutionContext
-{
-    private readonly List<ExecutionScope> _scopeStack = new List<ExecutionScope>();
-    private readonly string _scriptName;
-    private readonly string _sourceCode;
-    
-    // Direct access to global scope for built-in functions
-    public ExecutionScope GlobalScope => _scopeStack[0];
-    
-    // Current scope always refers to the topmost scope on the stack
-    public ExecutionScope CurrentScope => _scopeStack[_scopeStack.Count - 1];
-    
-    // Current source location for error reporting
-    public SourceLocation CurrentLocation => CurrentScope.Location;
-    
-    public ExecutionContext(string scriptName, string sourceCode)
+    public class ExecutionContext
     {
-        _scriptName = scriptName;
-        _sourceCode = sourceCode;
-        
-        // Initialize with a global scope
-        _scopeStack.Add(new ExecutionScope(
-            new SourceLocation(1, 1, "Script start", scriptName)
-        ));
-    }
-    
-    // Push a new scope with the current location
-    public void PushScope(Stmt? statement = null, bool inheritVariables = false)
-    {
-        SourceLocation location;
-        
-        if (statement != null)
-            location = new SourceLocation(statement, _scriptName);
-        else
-            location = new SourceLocation(
-                CurrentLocation.Line,
-                CurrentLocation.Column,
-                "Anonymous scope",
+        private readonly List<ExecutionScope> _scopeStack = new List<ExecutionScope>();
+        private readonly string _scriptName;
+        private readonly string _sourceCode;
+
+        // Direct access to global scope for built-in functions
+        public ExecutionScope GlobalScope => _scopeStack[0];
+
+        // Current scope always refers to the topmost scope on the stack
+        public ExecutionScope CurrentScope => _scopeStack[_scopeStack.Count - 1];
+
+        // Current source location for error reporting
+        public SourceLocation CurrentLocation => CurrentScope.Location;
+
+        public ExecutionContext(string scriptName, string sourceCode)
+        {
+            _scriptName = scriptName;
+            _sourceCode = sourceCode;
+
+            // Initialize with a global scope
+            _scopeStack.Add(
+                new ExecutionScope(new SourceLocation(1, 1, "Script start", scriptName))
+            );
+        }
+
+        // Push a new scope with the current location
+        public void PushScope(Stmt? statement = null, bool inheritVariables = false)
+        {
+            SourceLocation location;
+
+            if (statement != null)
+                location = new SourceLocation(statement, _scriptName);
+            else
+                location = new SourceLocation(
+                    CurrentLocation.Line,
+                    CurrentLocation.Column,
+                    "Anonymous scope",
+                    _scriptName
+                );
+
+            var parentVars = inheritVariables ? CurrentScope.Variables : null;
+            _scopeStack.Add(new ExecutionScope(location, parentVars));
+        }
+
+        // Push location tracking without creating a new variable scope
+        public void PushLocation(Stmt stmt)
+        {
+            CurrentScope.Location = new SourceLocation(
+                stmt.Line,
+                stmt.Column,
+                $"{stmt.GetType().Name}",
                 _scriptName
             );
-            
-        var parentVars = inheritVariables ? CurrentScope.Variables : null;
-        _scopeStack.Add(new ExecutionScope(location, parentVars));
-    }
-    
-    // Push location tracking without creating a new variable scope
-    public void PushLocation(Stmt stmt)
-    {
-        CurrentScope.Location = new SourceLocation(
-            stmt.Line,
-            stmt.Column,
-            $"{stmt.GetType().Name}",
-            _scriptName
-        );
-    }
-    
-    public void PushLocation(Expr expr)
-    {
-        CurrentScope.Location = new SourceLocation(
-            expr.Line,
-            expr.Column,
-            $"{expr.GetType().Name}",
-            _scriptName
-        );
-    }
-    
-    // Pop the topmost scope
-    public void PopScope()
-    {
-        if (_scopeStack.Count > 1)
-        {
-            _scopeStack.RemoveAt(_scopeStack.Count - 1);
         }
-    }
-    
-    // Restore the previous location
-    public void PopLocation()
-    {
-        // In our implementation, location is stored in the scope,
-        // so this is a no-op unless we maintain a location stack
-    }
-    
-    // Look up a variable by traversing the scope stack from top to bottom
-    public object? LookupVariable(string name)
-    {
-        for (int i = _scopeStack.Count - 1; i >= 0; i--)
+
+        public void PushLocation(Expr expr)
         {
-            if (_scopeStack[i].Variables.TryGetValue(name, out var value))
+            CurrentScope.Location = new SourceLocation(
+                expr.Line,
+                expr.Column,
+                $"{expr.GetType().Name}",
+                _scriptName
+            );
+        }
+
+        // Pop the topmost scope
+        public void PopScope()
+        {
+            if (_scopeStack.Count > 1)
             {
-                return value;
+                _scopeStack.RemoveAt(_scopeStack.Count - 1);
             }
         }
-        return null;
-    }
-    
-    // Get all variables (for parallel task isolation)
-    public Dictionary<string, object?> GetAllVariables()
-    {
-        var result = new Dictionary<string, object?>();
-        
-        // Start with globals and override with more local scopes
-        for (int i = 0; i < _scopeStack.Count; i++)
+
+        // Restore the previous location
+        public void PopLocation()
         {
-            foreach (var kvp in _scopeStack[i].Variables)
+            // In our implementation, location is stored in the scope,
+            // so this is a no-op unless we maintain a location stack
+        }
+
+        // Look up a variable by traversing the scope stack from top to bottom
+        public object? LookupVariable(string name)
+        {
+            for (int i = _scopeStack.Count - 1; i >= 0; i--)
             {
-                result[kvp.Key] = kvp.Value;
+                if (_scopeStack[i].Variables.TryGetValue(name, out var value))
+                {
+                    return value;
+                }
             }
+            return null;
         }
-        
-        return result;
-    }
-    
-    // Assign to an existing variable in any scope
-    public bool AssignVariable(string name, object? value)
-    {
-        for (int i = _scopeStack.Count - 1; i >= 0; i--)
+
+        // Get all variables (for parallel task isolation)
+        public Dictionary<string, object?> GetAllVariables()
         {
-            if (_scopeStack[i].Variables.ContainsKey(name))
+            var result = new Dictionary<string, object?>();
+
+            // Start with globals and override with more local scopes
+            for (int i = 0; i < _scopeStack.Count; i++)
             {
-                _scopeStack[i].Variables[name] = value;
-                return true;
+                foreach (var kvp in _scopeStack[i].Variables)
+                {
+                    result[kvp.Key] = kvp.Value;
+                }
             }
+
+            return result;
         }
-        return false;
-    }
-    
-    // Extract source code fragment for error context
-    public string GetContextFragment(int line, int contextLines = 1)
-{
-    if (string.IsNullOrEmpty(_sourceCode) || line <= 0)
-        return string.Empty;
-            
-    string[] lines = _sourceCode.Split('\n');
-    if (line > lines.Length)
-        return string.Empty;
-            
-    int startLine = Math.Max(1, line - contextLines);
-    int endLine = Math.Min(lines.Length, line + contextLines);
-        
-    var result = new StringBuilder();
-    
-    // Add a header showing file location
-    result.AppendLine($"In {_scriptName}:");
-    
-    // Show context lines with line numbers
-    for (int i = startLine - 1; i < endLine; i++)
-    {
-        // Add an arrow indicator for the error line
-        string linePrefix = (i == line - 1) ? "→ " : "  ";
-        
-        // Add line number and code
-        result.AppendLine($"{linePrefix}{i + 1}: {lines[i]}");
-        
-        // Add error position indicator with caret
-        if (i == line - 1)
+
+        // Assign to an existing variable in any scope
+        public bool AssignVariable(string name, object? value)
         {
-            int column = Math.Max(1, Math.Min(lines[i].Length + 1, CurrentLocation.Column));
-            // The +2 compensates for the line number display
-            result.AppendLine($"    {new string(' ', column)}^");
+            for (int i = _scopeStack.Count - 1; i >= 0; i--)
+            {
+                if (_scopeStack[i].Variables.ContainsKey(name))
+                {
+                    _scopeStack[i].Variables[name] = value;
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        // Extract source code fragment for error context
+        public string GetContextFragment(int line, int contextLines = 1)
+        {
+            if (string.IsNullOrEmpty(_sourceCode) || line <= 0)
+                return string.Empty;
+
+            string[] lines = _sourceCode.Split('\n');
+            if (line > lines.Length)
+                return string.Empty;
+
+            int startLine = Math.Max(1, line - contextLines);
+            int endLine = Math.Min(lines.Length, line + contextLines);
+
+            var result = new StringBuilder();
+
+            // Add a header showing file location
+            result.AppendLine($"In {_scriptName}:");
+
+            // Show context lines with line numbers
+            for (int i = startLine - 1; i < endLine; i++)
+            {
+                // Add an arrow indicator for the error line
+                string linePrefix = (i == line - 1) ? "→ " : "  ";
+
+                // Add line number and code
+                result.AppendLine($"{linePrefix}{i + 1}: {lines[i]}");
+
+                // Add error position indicator with caret
+                if (i == line - 1)
+                {
+                    int column = Math.Max(1, Math.Min(lines[i].Length + 1, CurrentLocation.Column));
+                    // The +2 compensates for the line number display
+                    result.AppendLine($"    {new string(' ', column)}^");
+                }
+            }
+
+            return result.ToString();
         }
     }
-        
-    return result.ToString();
-}
-}
+
     public class Executor
     {
         private readonly Dictionary<string, List<EventHandler>> _eventHandlers = new();
         private readonly ExecutionContext _context;
 
-  public ExecutionContext Context => _context; // public accessor.. don't wanna redo all the _context shit
+        public ExecutionContext Context => _context; // public accessor.. don't wanna redo all the _context shit
         private readonly string _scriptPath;
         private readonly string _sourceCode;
 
@@ -229,10 +229,12 @@ public class ExecutionContext
                 (exec, args) =>
                 {
                     if (args.Count != 1)
-                        throw new RuntimeException("wait() expects exactly one argument (milliseconds).",
+                        throw new RuntimeException(
+                            "wait() expects exactly one argument (milliseconds).",
                             _context.CurrentLocation.Line,
-                            _context.CurrentLocation.Column);
-                    
+                            _context.CurrentLocation.Column
+                        );
+
                     int ms = Convert.ToInt32(args[0]);
                     System.Threading.Thread.Sleep(ms);
                     return null;
@@ -240,19 +242,20 @@ public class ExecutionContext
             );
         }
 
-public void PushEnvironment(Dictionary<string, object?> env)
-{
-    _context.PushScope();
-    foreach (var kvp in env)
-    {
-        _context.CurrentScope.Variables[kvp.Key] = kvp.Value;
-    }
-}
+        public void PushEnvironment(Dictionary<string, object?> env)
+        {
+            _context.PushScope();
+            foreach (var kvp in env)
+            {
+                _context.CurrentScope.Variables[kvp.Key] = kvp.Value;
+            }
+        }
 
-public void PopEnvironment()
-{
-    _context.PopScope();
-}
+        public void PopEnvironment()
+        {
+            _context.PopScope();
+        }
+
         /// <summary>
         /// Executes the entire program
         /// </summary>
@@ -265,7 +268,8 @@ public void PopEnvironment()
             // Process statements in order
             foreach (var stmt in program.Statements)
             {
-                try {
+                try
+                {
                     if (stmt is TaskStmt task)
                     {
                         if (task.IsOnce)
@@ -290,7 +294,7 @@ public void PopEnvironment()
                     {
                         if (!_eventHandlers.ContainsKey(ev.EventName))
                             _eventHandlers[ev.EventName] = new List<EventHandler>();
-                        
+
                         _eventHandlers[ev.EventName].Add(new EventHandler(ev.Parameters, ev.Body));
                     }
                     else
@@ -299,23 +303,29 @@ public void PopEnvironment()
                         ExecuteStmt(stmt);
                     }
                 }
-                catch (ShelltracException ex) {
+                catch (ShelltracException ex)
+                {
                     Console.Error.WriteLine($"[ERROR] {ex}");
                     // Continue execution despite errors in top-level statements
                 }
             }
 
             // Wait for all once-tasks to complete
-            try {
+            try
+            {
                 Task.WaitAll(onceTasks.ToArray());
             }
-            catch (AggregateException ae) {
+            catch (AggregateException ae)
+            {
                 // Report all task exceptions
-                foreach (var ex in ae.InnerExceptions) {
-                    if (ex is ShelltracException sEx) {
+                foreach (var ex in ae.InnerExceptions)
+                {
+                    if (ex is ShelltracException sEx)
+                    {
                         Console.Error.WriteLine($"[TASK ERROR] {sEx}");
                     }
-                    else {
+                    else
+                    {
                         Console.Error.WriteLine($"[TASK ERROR] {ex.Message}");
                     }
                 }
@@ -331,49 +341,53 @@ public void PopEnvironment()
             {
                 // Track statement location for error reporting
                 _context.PushLocation(stmt);
-                
+
                 switch (stmt)
                 {
                     case TaskStmt:
                     case EventStmt:
                         // No-op here, handled in Execute
                         break;
-                        
+
                     case TriggerStmt trigger:
                         HandleTrigger(trigger);
                         break;
-                        
+
                     case InvocationStmt inv:
                         HandleInvocation(inv);
                         break;
-                        
+
                     case VarDeclStmt vd:
                         // Always put in current scope
                         object val = Eval(vd.Initializer);
                         _context.CurrentScope.Variables[vd.VarName] = val;
                         break;
-                        
+
                     case AssignStmt assignStmt:
                         object rhsVal = Eval(assignStmt.ValueExpr);
                         if (!_context.AssignVariable(assignStmt.VarName, rhsVal))
                         {
-                            throw new RuntimeException($"Variable '{assignStmt.VarName}' not found.",
-                                stmt.Line, stmt.Column, _context.GetContextFragment(stmt.Line));
+                            throw new RuntimeException(
+                                $"Variable '{assignStmt.VarName}' not found.",
+                                stmt.Line,
+                                stmt.Column,
+                                _context.GetContextFragment(stmt.Line)
+                            );
                         }
                         break;
-                        
+
                     case IndexAssignStmt indexAssign:
                         HandleIndexAssign(indexAssign);
                         break;
-                        
+
                     case IfStmt ifs:
                         HandleIf(ifs);
                         break;
-                        
+
                     case ForStmt fs:
                         HandleFor(fs);
                         break;
-                        
+
                     case FunctionStmt func:
                         // Store function in the current scope
                         _context.CurrentScope.Variables[func.Name] = new Function(
@@ -381,7 +395,7 @@ public void PopEnvironment()
                             new Dictionary<string, object>(_context.CurrentScope.Variables)
                         );
                         break;
-                        
+
                     case ReturnStmt ret:
                         List<object?> returnValues = new List<object?>();
                         foreach (var valueExpr in ret.Values)
@@ -389,11 +403,11 @@ public void PopEnvironment()
                             returnValues.Add(Eval(valueExpr));
                         }
                         throw new ReturnException(returnValues);
-                        
+
                     case DestructuringAssignStmt destructAssign:
                         HandleDestructuringAssign(destructAssign);
                         break;
-                        
+
                     case LoopYieldStmt yield:
                         object? yieldValue = yield.Value != null ? Eval(yield.Value) : null;
                         throw new YieldException(
@@ -402,7 +416,7 @@ public void PopEnvironment()
                             yield.IsGlobalCancel,
                             yield.IsOverride
                         );
-                        
+
                     case ExpressionStmt expr:
                         Eval(expr.Expression);
                         break;
@@ -428,13 +442,14 @@ public void PopEnvironment()
                 // Convert generic exceptions to our structured format
                 var location = _context.CurrentLocation;
                 string context = _context.GetContextFragment(location.Line);
-                
+
                 throw new RuntimeException(
                     $"Error executing {stmt.GetType().Name}: {ex.Message}",
                     location.Line,
                     location.Column,
                     context,
-                    ex);
+                    ex
+                );
             }
             finally
             {
@@ -449,7 +464,7 @@ public void PopEnvironment()
         {
             // Create a new scope for this block
             _context.PushScope();
-            
+
             try
             {
                 foreach (var stmt in block)
@@ -465,7 +480,7 @@ public void PopEnvironment()
         }
 
         #region Statement Handlers
-        
+
         private void HandleTrigger(TriggerStmt trigger)
         {
             if (_eventHandlers.TryGetValue(trigger.EventName, out var handlers))
@@ -475,7 +490,9 @@ public void PopEnvironment()
                     if (handler.Parameters.Count != trigger.Arguments.Count)
                         throw new RuntimeException(
                             $"Event {trigger.EventName} expects {handler.Parameters.Count} arguments, but got {trigger.Arguments.Count}",
-                            trigger.Line, trigger.Column);
+                            trigger.Line,
+                            trigger.Column
+                        );
 
                     // Evaluate each argument
                     List<object?> evaluatedArgs = new List<object?>();
@@ -484,15 +501,17 @@ public void PopEnvironment()
 
                     // Create a new scope for the event handler with parameter bindings
                     _context.PushScope();
-                    
+
                     try
                     {
                         // Bind parameters to values
                         for (int i = 0; i < handler.Parameters.Count; i++)
                         {
-                            _context.CurrentScope.Variables[handler.Parameters[i]] = evaluatedArgs[i];
+                            _context.CurrentScope.Variables[handler.Parameters[i]] = evaluatedArgs[
+                                i
+                            ];
                         }
-                        
+
                         // Execute the handler body
                         ExecuteBlock(handler.Body);
                     }
@@ -512,13 +531,13 @@ public void PopEnvironment()
         {
             // Evaluate the argument expression
             object val = Eval(inv.Argument);
-            
+
             switch (inv.CommandKeyword)
             {
                 case "log":
                     Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {Helper.ToPrettyString(val)}");
                     break;
-                    
+
                 case "ssh":
                     if (inv.Argument is SshExpr sshExpr)
                     {
@@ -527,11 +546,14 @@ public void PopEnvironment()
                     }
                     else
                     {
-                        throw new RuntimeException("SSH invocation requires host and command", 
-                            inv.Line, inv.Column);
+                        throw new RuntimeException(
+                            "SSH invocation requires host and command",
+                            inv.Line,
+                            inv.Column
+                        );
                     }
                     break;
-                    
+
                 case "sh":
                     string command = val?.ToString() ?? "";
                     ExecuteShellCommand(command, inv.Line, inv.Column);
@@ -548,9 +570,13 @@ public void PopEnvironment()
             // Support dictionary assignment
             if (target is IDictionary<string, object> dict)
             {
-                string key = index?.ToString() ?? 
-                    throw new RuntimeException("Dictionary key cannot be null", 
-                        stmt.Line, stmt.Column);
+                string key =
+                    index?.ToString()
+                    ?? throw new RuntimeException(
+                        "Dictionary key cannot be null",
+                        stmt.Line,
+                        stmt.Column
+                    );
                 dict[key] = value;
             }
             // Support list assignment
@@ -558,15 +584,20 @@ public void PopEnvironment()
             {
                 int i = ConvertToInt(index);
                 if (i < 0 || i >= list.Count)
-                    throw new RuntimeException($"Index {i} is out of range for list of length {list.Count}", 
-                        stmt.Line, stmt.Column);
+                    throw new RuntimeException(
+                        $"Index {i} is out of range for list of length {list.Count}",
+                        stmt.Line,
+                        stmt.Column
+                    );
                 list[i] = value;
             }
             else
             {
                 throw new RuntimeException(
                     $"Type {target?.GetType().Name ?? "null"} does not support index assignment",
-                    stmt.Line, stmt.Column);
+                    stmt.Line,
+                    stmt.Column
+                );
             }
         }
 
@@ -607,7 +638,7 @@ public void PopEnvironment()
         {
             object condVal = Eval(ifs.Condition);
             bool condition = ConvertToBool(condVal);
-            
+
             if (condition)
             {
                 ExecuteBlock(ifs.ThenBlock);
@@ -621,23 +652,26 @@ public void PopEnvironment()
         private void HandleFor(ForStmt fs)
         {
             object iterable = Eval(fs.Iterable);
-            
+
             if (!(iterable is IEnumerable enumerable))
             {
-                throw new RuntimeException($"For loop requires an enumerable value, got {iterable?.GetType().Name ?? "null"}",
-                    fs.Line, fs.Column);
+                throw new RuntimeException(
+                    $"For loop requires an enumerable value, got {iterable?.GetType().Name ?? "null"}",
+                    fs.Line,
+                    fs.Column
+                );
             }
 
             foreach (object item in enumerable)
             {
                 // Create a new scope for this iteration
                 _context.PushScope();
-                
+
                 try
                 {
                     // Set the loop variable
                     _context.CurrentScope.Variables[fs.IteratorVar] = item;
-                    
+
                     // Execute the body
                     ExecuteBlock(fs.Body);
                 }
@@ -653,11 +687,11 @@ public void PopEnvironment()
                 }
             }
         }
-        
+
         #endregion
 
         #region Expression Evaluation
-        
+
         /// <summary>
         /// Evaluates an expression to its value
         /// </summary>
@@ -667,12 +701,12 @@ public void PopEnvironment()
             {
                 // Track expression location for error reporting
                 _context.PushLocation(expr);
-                
+
                 switch (expr)
                 {
                     case LiteralExpr lit:
                         return lit.Value;
-                        
+
                     case InterpolatedStringExpr interp:
                     {
                         var sb = new StringBuilder();
@@ -683,13 +717,13 @@ public void PopEnvironment()
                         }
                         return sb.ToString();
                     }
-                    
+
                     case VarExpr v:
                         return _context.LookupVariable(v.Name);
-                        
+
                     case BinaryExpr bin:
                         return EvalBinary(bin);
-                        
+
                     case CallExpr call:
                         object? callee = Eval(call.Callee);
                         if (callee is Callable callable)
@@ -699,19 +733,22 @@ public void PopEnvironment()
                                 args.Add(Eval(arg));
                             return callable.Call(this, args);
                         }
-                        throw new RuntimeException("Attempted to call a non-function",
-                            expr.Line, expr.Column);
-                            
+                        throw new RuntimeException(
+                            "Attempted to call a non-function",
+                            expr.Line,
+                            expr.Column
+                        );
+
                     case MemberAccessExpr memberExpr:
                         object parent = Eval(memberExpr.Object);
                         return BindMember(parent, memberExpr.MemberName);
-                        
+
                     case ArrayExpr arr:
                         var list = new List<object?>();
                         foreach (var element in arr.Elements)
                             list.Add(Eval(element));
                         return list;
-                        
+
                     case IfExpr ifExpr:
                     {
                         var condVal = Eval(ifExpr.Condition);
@@ -723,20 +760,23 @@ public void PopEnvironment()
                         else
                             return null;
                     }
-                    
+
                     case ForExpr forExpr:
                     {
                         var iterable = Eval(forExpr.Iterable);
                         if (!(iterable is IEnumerable en))
-                            throw new RuntimeException("For expression must iterate over an enumerable",
-                                forExpr.Line, forExpr.Column);
-                                
+                            throw new RuntimeException(
+                                "For expression must iterate over an enumerable",
+                                forExpr.Line,
+                                forExpr.Column
+                            );
+
                         var results = new List<object?>();
                         foreach (object item in en)
                         {
                             _context.PushScope();
                             _context.CurrentScope.Variables[forExpr.IteratorVar] = item;
-                            
+
                             try
                             {
                                 var value = EvaluateBlockExpression(forExpr.Body);
@@ -749,24 +789,27 @@ public void PopEnvironment()
                         }
                         return results;
                     }
-                    
+
                     case ParallelForExpr pf:
                         return EvalParallelFor(pf);
-                        
+
                     case DictExpr dict:
                         var map = new Dictionary<string, object?>();
                         foreach (var (keyExpr, valueExpr) in dict.Pairs)
                         {
                             var keyObj = Eval(keyExpr);
                             if (keyObj == null)
-                                throw new RuntimeException("Dictionary key cannot be null",
-                                    expr.Line, expr.Column);
-                                    
+                                throw new RuntimeException(
+                                    "Dictionary key cannot be null",
+                                    expr.Line,
+                                    expr.Column
+                                );
+
                             string key = keyObj.ToString()!;
                             map[key] = Eval(valueExpr);
                         }
                         return map;
-                        
+
                     case IndexExpr indexExpr:
                         object target = Eval(indexExpr.Target);
                         object indexValue = Eval(indexExpr.Index);
@@ -775,25 +818,33 @@ public void PopEnvironment()
                         {
                             int i = ConvertToInt(indexValue);
                             if (i < 0 || i >= tlist.Count)
-                                throw new RuntimeException($"Index {i} is out of range for list of length {tlist.Count}",
-                                    indexExpr.Line, indexExpr.Column);
+                                throw new RuntimeException(
+                                    $"Index {i} is out of range for list of length {tlist.Count}",
+                                    indexExpr.Line,
+                                    indexExpr.Column
+                                );
                             return tlist[i];
                         }
                         else if (target is IDictionary<string, object> tdict)
                         {
                             string key = indexValue?.ToString() ?? "";
                             if (!tdict.ContainsKey(key))
-                                throw new RuntimeException($"Key '{key}' not found in dictionary",
-                                    indexExpr.Line, indexExpr.Column);
+                                throw new RuntimeException(
+                                    $"Key '{key}' not found in dictionary",
+                                    indexExpr.Line,
+                                    indexExpr.Column
+                                );
                             return tdict[key];
                         }
                         else
                         {
                             throw new RuntimeException(
                                 $"Type {target?.GetType().Name ?? "null"} does not support indexing",
-                                indexExpr.Line, indexExpr.Column);
+                                indexExpr.Line,
+                                indexExpr.Column
+                            );
                         }
-                        
+
                     case RangeExpr rangeExpr:
                     {
                         object leftVal = Eval(rangeExpr.Start);
@@ -802,16 +853,16 @@ public void PopEnvironment()
                         int end = ConvertToInt(rightVal);
                         return new Range(start, end);
                     }
-                    
+
                     case SshExpr sshExpr:
                         return ExecuteSshCommand(sshExpr);
-                        
+
                     case ShellExpr shellCall:
                         object cmdObj = Eval(shellCall.Argument);
                         string command = cmdObj?.ToString() ?? "";
                         return ExecuteShellCommand(command, expr.Line, expr.Column);
                 }
-                
+
                 return null;
             }
             catch (ShelltracException)
@@ -824,13 +875,14 @@ public void PopEnvironment()
                 // Convert generic exceptions to our structured format
                 var location = _context.CurrentLocation;
                 string context = _context.GetContextFragment(location.Line);
-                
+
                 throw new RuntimeException(
                     $"Error evaluating {expr.GetType().Name}: {ex.Message}",
                     location.Line,
                     location.Column,
                     context,
-                    ex);
+                    ex
+                );
             }
             finally
             {
@@ -842,8 +894,11 @@ public void PopEnvironment()
         {
             var iterable = Eval(pf.Iterable);
             if (!(iterable is IEnumerable en))
-                throw new RuntimeException("Parallel for requires an enumerable", 
-                    pf.Line, pf.Column);
+                throw new RuntimeException(
+                    "Parallel for requires an enumerable",
+                    pf.Line,
+                    pf.Column
+                );
 
             var items = new List<object>();
             foreach (var item in en)
@@ -855,75 +910,81 @@ public void PopEnvironment()
             var firstCancelResult = null as object;
             var hasOverride = false;
 
-            var tasks = items.Select(item =>
-                Task.Run(() =>
-                {
-                    // Create an isolated executor for this parallel task
-                    var isolatedExecutor = new Executor(_scriptPath, _sourceCode);
-                    
-                    // Copy relevant state
-                    foreach (var variable in _context.GetAllVariables())
-                        isolatedExecutor._context.GlobalScope.Variables[variable.Key] = variable.Value;
-                    
-                    // Add iterator variable
-                    isolatedExecutor._context.GlobalScope.Variables[pf.IteratorVar] = item;
-                    
-                    try
-                    {
-                        // Execute each statement, watching for yield/return
-                        foreach (var stmt in pf.Body)
+            var tasks = items
+                .Select(item =>
+                    Task.Run(
+                        () =>
                         {
-                            if (cts.Token.IsCancellationRequested)
-                                break;
-                                
+                            // Create an isolated executor for this parallel task
+                            var isolatedExecutor = new Executor(_scriptPath, _sourceCode);
+
+                            // Copy relevant state
+                            foreach (var variable in _context.GetAllVariables())
+                                isolatedExecutor._context.GlobalScope.Variables[variable.Key] =
+                                    variable.Value;
+
+                            // Add iterator variable
+                            isolatedExecutor._context.GlobalScope.Variables[pf.IteratorVar] = item;
+
                             try
                             {
-                                isolatedExecutor.ExecuteStmt(stmt);
-                            }
-                            catch (YieldException ye)
-                            {
-                                if (ye.IsEmit)
+                                // Execute each statement, watching for yield/return
+                                foreach (var stmt in pf.Body)
                                 {
-                                    // Add to results and continue
-                                    results.Add(ye.Value);
-                                }
-                                else
-                                {
-                                    // Add to results and terminate this iteration
-                                    results.Add(ye.Value);
+                                    if (cts.Token.IsCancellationRequested)
+                                        break;
 
-                                    if (ye.IsGlobalCancel)
+                                    try
                                     {
-                                        lock (cts)
+                                        isolatedExecutor.ExecuteStmt(stmt);
+                                    }
+                                    catch (YieldException ye)
+                                    {
+                                        if (ye.IsEmit)
                                         {
-                                            if (!cts.IsCancellationRequested)
+                                            // Add to results and continue
+                                            results.Add(ye.Value);
+                                        }
+                                        else
+                                        {
+                                            // Add to results and terminate this iteration
+                                            results.Add(ye.Value);
+
+                                            if (ye.IsGlobalCancel)
                                             {
-                                                firstCancelResult = ye.Value;
-                                                hasOverride = ye.IsOverride;
-                                                cts.Cancel();
+                                                lock (cts)
+                                                {
+                                                    if (!cts.IsCancellationRequested)
+                                                    {
+                                                        firstCancelResult = ye.Value;
+                                                        hasOverride = ye.IsOverride;
+                                                        cts.Cancel();
+                                                    }
+                                                }
                                             }
+
+                                            // Break out of the statement loop
+                                            break;
                                         }
                                     }
-                                    
-                                    // Break out of the statement loop
-                                    break;
+                                    catch (ReturnException re)
+                                    {
+                                        // Add the return value and exit
+                                        results.Add(re.Values[0]);
+                                        break;
+                                    }
                                 }
                             }
-                            catch (ReturnException re)
+                            catch (Exception ex)
                             {
-                                // Add the return value and exit
-                                results.Add(re.Values[0]);
-                                break;
+                                // Capture any other exception
+                                errors.Add(ex);
                             }
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        // Capture any other exception
-                        errors.Add(ex);
-                    }
-                }, cts.Token)
-            ).ToArray();
+                        },
+                        cts.Token
+                    )
+                )
+                .ToArray();
 
             try
             {
@@ -937,42 +998,42 @@ public void PopEnvironment()
                     errors.Add(ex);
                 }
             }
-            
+
             // Report any errors
             if (errors.Count > 0)
             {
                 var location = _context.CurrentLocation;
-                
+
                 if (errors.Count == 1)
                 {
                     var error = errors.First();
                     if (error is ShelltracException sEx)
                         throw sEx;
-                        
+
                     throw new RuntimeException(
                         $"Error in parallel task: {error.Message}",
                         location.Line,
                         location.Column,
                         "",
-                        error);
+                        error
+                    );
                 }
                 else
                 {
                     // Aggregate multiple errors
-                    StringBuilder errorMsg = new StringBuilder($"{errors.Count} errors in parallel execution:");
+                    StringBuilder errorMsg = new StringBuilder(
+                        $"{errors.Count} errors in parallel execution:"
+                    );
                     foreach (var error in errors.Take(3))
                     {
                         errorMsg.AppendLine();
                         errorMsg.Append("- " + error.Message);
                     }
-                    
+
                     if (errors.Count > 3)
                         errorMsg.AppendLine($"\n- ... and {errors.Count - 3} more errors");
-                        
-                    throw new RuntimeException(
-                        errorMsg.ToString(),
-                        location.Line,
-                        location.Column);
+
+                    throw new RuntimeException(errorMsg.ToString(), location.Line, location.Column);
                 }
             }
 
@@ -983,7 +1044,7 @@ public void PopEnvironment()
         {
             _context.PushScope();
             object? lastValue = null;
-            
+
             try
             {
                 foreach (var stmt in block)
@@ -1008,16 +1069,19 @@ public void PopEnvironment()
         private object? BindMember(object parent, string memberName)
         {
             if (parent == null)
-                throw new RuntimeException($"Cannot access member '{memberName}' of null",
-                    _context.CurrentLocation.Line, _context.CurrentLocation.Column);
-                    
+                throw new RuntimeException(
+                    $"Cannot access member '{memberName}' of null",
+                    _context.CurrentLocation.Line,
+                    _context.CurrentLocation.Column
+                );
+
             var type = parent.GetType();
 
             // First, look for instance methods
             var instanceMethods = type.GetMethods(BindingFlags.Instance | BindingFlags.Public)
                 .Where(m => string.Equals(m.Name, memberName, StringComparison.OrdinalIgnoreCase))
                 .ToList();
-                
+
             if (instanceMethods.Any())
             {
                 return new ReflectionCallable(parent, instanceMethods);
@@ -1035,7 +1099,7 @@ public void PopEnvironment()
                 memberName,
                 BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase
             );
-            
+
             if (property != null)
             {
                 return property.GetValue(parent);
@@ -1043,8 +1107,9 @@ public void PopEnvironment()
 
             throw new RuntimeException(
                 $"Member '{memberName}' not found on object of type {type.Name}",
-                _context.CurrentLocation.Line, 
-                _context.CurrentLocation.Column);
+                _context.CurrentLocation.Line,
+                _context.CurrentLocation.Column
+            );
         }
 
         private object EvalBinary(BinaryExpr bin)
@@ -1075,67 +1140,65 @@ public void PopEnvironment()
                 case "-":
                     return SubtractValues(leftVal, rightVal);
                 default:
-                    throw new RuntimeException($"Unsupported binary operator: {bin.Op}",
-                        bin.Line, bin.Column);
+                    throw new RuntimeException(
+                        $"Unsupported binary operator: {bin.Op}",
+                        bin.Line,
+                        bin.Column
+                    );
             }
         }
-        
+
         #endregion
-        
+
         #region Shell Command Execution
-        
+
         private List<object?> ExecuteShellCommand(string command, int line, int column)
         {
             try
             {
-                var psi = new ProcessStartInfo("bash", $"-c \"{command}\"")
+                // For complex commands, we'll pass them directly to bash without wrapping in quotes
+                // and let ProcessStartInfo handle the argument escaping
+                var psi = new ProcessStartInfo("bash")
                 {
+                    Arguments = $"-c \"{EscapeForBashDoubleQuotes(command)}\"",
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
                     UseShellExecute = false,
                     CreateNoWindow = true,
                 };
-
+                Console.WriteLine($"executing bash with: {psi.Arguments}");
                 var sw = Stopwatch.StartNew();
                 using var proc = Process.Start(psi);
                 int pid = proc.Id;
                 proc.WaitForExit();
                 sw.Stop();
-
                 string stdout = proc.StandardOutput.ReadToEnd().TrimEnd();
                 string stderr = proc.StandardError.ReadToEnd().TrimEnd();
                 int exitCode = proc.ExitCode;
                 long duration = sw.ElapsedMilliseconds;
-
                 if (exitCode != 0 && !string.IsNullOrEmpty(stderr))
                 {
                     // Non-zero exit code with error output is a warning, not an error
-                    Console.WriteLine($"[SHELL WARNING] Command exited with code {exitCode}: {stderr}");
+                    Console.WriteLine(
+                        $"[SHELL WARNING] Command exited with code {exitCode}: {stderr}"
+                    );
                 }
-
                 // Return multiple values
                 return new List<object?> { stdout, stderr, exitCode, duration, pid };
             }
             catch (Exception e)
             {
                 string context = _context.GetContextFragment(line);
-                throw new ShellCommandException(
-                    e.Message, 
-                    command,
-                    null, 
-                    line,
-                    column,
-                    context,
-                    e);
+                throw new ShellCommandException(e.Message, command, null, line, column, context, e);
             }
         }
-        
+
         private List<object?> ExecuteSshCommand(SshExpr sshExpr)
         {
             object hostObj = Eval(sshExpr.Host);
             object sshCmdObj = Eval(sshExpr.Command);
             string host = hostObj?.ToString() ?? "";
-            string sshCommand = sshCmdObj?.ToString() ?? "";
+            string sshCommand = EscapeForBashDoubleQuotes(sshCmdObj?.ToString() ?? "");
 
             try
             {
@@ -1166,7 +1229,7 @@ public void PopEnvironment()
                 int line = sshExpr.Line;
                 int column = sshExpr.Column;
                 string context = _context.GetContextFragment(line);
-                
+
                 throw new SshCommandException(
                     e.Message,
                     host,
@@ -1175,16 +1238,58 @@ public void PopEnvironment()
                     line,
                     column,
                     context,
-                    e);
+                    e
+                );
             }
         }
-        
+
+        public static string EscapeForBashDoubleQuotes(string input)
+        {
+            if (string.IsNullOrEmpty(input))
+                return string.Empty;
+
+            // Characters that need special escaping within double quotes in bash
+            // - Double quote (") needs to be escaped with backslash
+            // - Dollar sign ($) needs to be escaped to prevent variable expansion
+            // - Backtick (`) needs to be escaped to prevent command substitution
+            // - Backslash (\) needs to be escaped in certain contexts
+            // - Exclamation mark (!) might need escaping in some contexts for history expansion
+
+            StringBuilder result = new StringBuilder(input.Length * 2);
+
+            foreach (char c in input)
+            {
+                switch (c)
+                {
+                    case '"':
+                        result.Append("\\\"");
+                        break;
+                    case '$':
+                        result.Append("$");
+                        break;
+                    case '`':
+                        result.Append("`");
+                        break;
+                    case '\\':
+                        result.Append("\\\\");
+                        break;
+                    case '!':
+                        result.Append("!");
+                        break;
+                    default:
+                        result.Append(c);
+                        break;
+                }
+            }
+
+            return result.ToString();
+        }
         #endregion
-        
+
         #region Utility Methods
-        
+
         // A cache to avoid repeated reflection
-        private static readonly Dictionary<(Type, string), List<MethodInfo>> _extMethodCache = 
+        private static readonly Dictionary<(Type, string), List<MethodInfo>> _extMethodCache =
             new Dictionary<(Type, string), List<MethodInfo>>();
 
         private List<MethodInfo> FindExtensionMethods(Type targetType, string methodName)
@@ -1202,16 +1307,24 @@ public void PopEnvironment()
                     // Only consider static classes
                     if (!type.IsAbstract || !type.IsSealed)
                         continue;
-                        
-                    foreach (var method in type.GetMethods(BindingFlags.Static | BindingFlags.Public))
+
+                    foreach (
+                        var method in type.GetMethods(BindingFlags.Static | BindingFlags.Public)
+                    )
                     {
-                        if (!string.Equals(method.Name, methodName, StringComparison.OrdinalIgnoreCase))
+                        if (
+                            !string.Equals(
+                                method.Name,
+                                methodName,
+                                StringComparison.OrdinalIgnoreCase
+                            )
+                        )
                             continue;
 
                         var parameters = method.GetParameters();
                         if (parameters.Length == 0)
                             continue;
-                            
+
                         if (parameters[0].ParameterType.IsAssignableFrom(targetType))
                         {
                             methods.Add(method);
@@ -1219,7 +1332,7 @@ public void PopEnvironment()
                     }
                 }
             }
-            
+
             _extMethodCache[key] = methods;
             return methods;
         }
@@ -1293,8 +1406,9 @@ public void PopEnvironment()
             }
             throw new RuntimeException(
                 $"Cannot multiply {left} and {right} - expected numeric values",
-                _context.CurrentLocation.Line, 
-                _context.CurrentLocation.Column);
+                _context.CurrentLocation.Line,
+                _context.CurrentLocation.Column
+            );
         }
 
         private object DivideValues(object left, object right)
@@ -1302,16 +1416,20 @@ public void PopEnvironment()
             if (left is int li && right is int ri)
             {
                 if (ri == 0)
-                    throw new RuntimeException("Division by zero",
-                        _context.CurrentLocation.Line, 
-                        _context.CurrentLocation.Column);
+                    throw new RuntimeException(
+                        "Division by zero",
+                        _context.CurrentLocation.Line,
+                        _context.CurrentLocation.Column
+                    );
                 return li / ri;
             }
             throw new RuntimeException(
                 $"Cannot divide {left} and {right} - expected numeric values",
-                _context.CurrentLocation.Line, 
-                    _context.CurrentLocation.Column,
-    _context.GetContextFragment(_context.CurrentLocation.Line));        }
+                _context.CurrentLocation.Line,
+                _context.CurrentLocation.Column,
+                _context.GetContextFragment(_context.CurrentLocation.Line)
+            );
+        }
 
         private object SubtractValues(object left, object right)
         {
@@ -1321,10 +1439,10 @@ public void PopEnvironment()
             }
             throw new RuntimeException(
                 $"Cannot subtract {left} and {right} - expected numeric values",
-                _context.CurrentLocation.Line, 
-                    _context.CurrentLocation.Column,
-    _context.GetContextFragment(_context.CurrentLocation.Line));
-
+                _context.CurrentLocation.Line,
+                _context.CurrentLocation.Column,
+                _context.GetContextFragment(_context.CurrentLocation.Line)
+            );
         }
 
         // Type conversion helpers
@@ -1334,7 +1452,7 @@ public void PopEnvironment()
                 return i;
             if (val is bool b)
                 return b ? 1 : 0;
-                
+
             int.TryParse(val?.ToString() ?? "0", out int result);
             return result;
         }
@@ -1347,10 +1465,10 @@ public void PopEnvironment()
                 return i != 0;
             if (val is string s)
                 return !string.IsNullOrEmpty(s);
-                
+
             return val != null;
         }
-        
+
         #endregion
     }
 
@@ -1487,71 +1605,76 @@ public void PopEnvironment()
         public ReturnTuple(List<object?> values) => Values = values;
     }
 
-public class ExtensionMethodCallable : Callable
-{
-    private readonly object _target;
-    private readonly List<MethodInfo> _methods;
-
-    public ExtensionMethodCallable(object target, List<MethodInfo> methods)
+    public class ExtensionMethodCallable : Callable
     {
-        _target = target;
-        _methods = methods;
-    }
+        private readonly object _target;
+        private readonly List<MethodInfo> _methods;
 
-    public object? Call(Executor executor, List<object?> arguments)
-    {
-        // Choose an overload that takes arguments.Count + 1 parameters
-        MethodInfo? method = _methods.FirstOrDefault(m =>
-            m.GetParameters().Length == arguments.Count + 1
-        );
-        
-        if (method == null)
-            throw new RuntimeException(
-                $"No extension method found for {_target.GetType().Name} with {arguments.Count} arguments",
-                executor.Context.CurrentLocation.Line,
-                executor.Context.CurrentLocation.Column);
-
-        ParameterInfo[] parameters = method.GetParameters();
-        object?[] convertedArgs = new object?[arguments.Count + 1];
-        convertedArgs[0] = _target; // Inject the target
-
-        for (int i = 0; i < arguments.Count; i++)
+        public ExtensionMethodCallable(object target, List<MethodInfo> methods)
         {
-            try {
-                convertedArgs[i + 1] = Convert.ChangeType(
-                    arguments[i],
-                    parameters[i + 1].ParameterType
-                );
-            }
-            catch (Exception ex) {
+            _target = target;
+            _methods = methods;
+        }
+
+        public object? Call(Executor executor, List<object?> arguments)
+        {
+            // Choose an overload that takes arguments.Count + 1 parameters
+            MethodInfo? method = _methods.FirstOrDefault(m =>
+                m.GetParameters().Length == arguments.Count + 1
+            );
+
+            if (method == null)
                 throw new RuntimeException(
-                    $"Cannot convert argument {i+1} from {arguments[i]?.GetType().Name ?? "null"} to {parameters[i + 1].ParameterType.Name}",
+                    $"No extension method found for {_target.GetType().Name} with {arguments.Count} arguments",
+                    executor.Context.CurrentLocation.Line,
+                    executor.Context.CurrentLocation.Column
+                );
+
+            ParameterInfo[] parameters = method.GetParameters();
+            object?[] convertedArgs = new object?[arguments.Count + 1];
+            convertedArgs[0] = _target; // Inject the target
+
+            for (int i = 0; i < arguments.Count; i++)
+            {
+                try
+                {
+                    convertedArgs[i + 1] = Convert.ChangeType(
+                        arguments[i],
+                        parameters[i + 1].ParameterType
+                    );
+                }
+                catch (Exception ex)
+                {
+                    throw new RuntimeException(
+                        $"Cannot convert argument {i + 1} from {arguments[i]?.GetType().Name ?? "null"} to {parameters[i + 1].ParameterType.Name}",
+                        executor.Context.CurrentLocation.Line,
+                        executor.Context.CurrentLocation.Column,
+                        innerException: ex
+                    );
+                }
+            }
+
+            try
+            {
+                object? result = method.Invoke(null, convertedArgs);
+
+                // If the result is already a collection that represents multiple values, return it directly
+                if (result is IEnumerable<object> objCollection && !(result is string))
+                {
+                    return objCollection.ToList();
+                }
+
+                return result;
+            }
+            catch (TargetInvocationException tie)
+            {
+                throw new RuntimeException(
+                    "Extension method invocation failed: " + tie.InnerException?.Message,
                     executor.Context.CurrentLocation.Line,
                     executor.Context.CurrentLocation.Column,
-                    innerException: ex);
+                    innerException: tie.InnerException
+                );
             }
-        }
-
-        try
-        {
-            object? result = method.Invoke(null, convertedArgs);
-
-            // If the result is already a collection that represents multiple values, return it directly
-            if (result is IEnumerable<object> objCollection && !(result is string))
-            {
-                return objCollection.ToList();
-            }
-
-            return result;
-        }
-        catch (TargetInvocationException tie)
-        {
-            throw new RuntimeException(
-                "Extension method invocation failed: " + tie.InnerException?.Message,
-                executor.Context.CurrentLocation.Line,
-                executor.Context.CurrentLocation.Column,
-                innerException: tie.InnerException);
         }
     }
-}
 }

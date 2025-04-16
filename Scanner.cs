@@ -362,9 +362,8 @@ namespace Shelltrac
             bool inInterpolation = false;
             int braceCount = 0;
             int maxIterations = _source.Length; // Safeguard against infinite loops
-    int iterations = 0;
+            int iterations = 0;
 
-        
             while (!IsAtEnd() && !(Peek() == '"' && !inInterpolation) && iterations < maxIterations)
             {
                 iterations++;
@@ -459,10 +458,13 @@ namespace Shelltrac
                 }
             }
 
-if (iterations >= maxIterations)
-    {
-        throw new Exception("Possible infinite loop detected in interpolated string processing at line " + _line);
-    }
+            if (iterations >= maxIterations)
+            {
+                throw new Exception(
+                    "Possible infinite loop detected in interpolated string processing at line "
+                        + _line
+                );
+            }
 
             // Add final string part if any
             if (sb.Length > 0)

@@ -17,12 +17,12 @@ namespace Shelltrac
             {
                 // Create the result dictionary
                 var result = new Dictionary<string, object>();
-                
+
                 // Parse the JSON document
                 using (JsonDocument document = JsonDocument.Parse(json))
                 {
                     JsonElement root = document.RootElement;
-                    
+
                     // Process based on the JSON root element type
                     switch (root.ValueKind)
                     {
@@ -39,7 +39,7 @@ namespace Shelltrac
                             break;
                     }
                 }
-                
+
                 return result;
             }
             catch (Exception ex)
@@ -47,7 +47,7 @@ namespace Shelltrac
                 throw new Exception($"Error parsing JSON: {ex.Message}", ex);
             }
         }
-        
+
         /// <summary>
         /// Try to parse a JSON string into a Shelltrac-compatible Dictionary
         /// </summary>
@@ -67,18 +67,21 @@ namespace Shelltrac
                 return false;
             }
         }
-        
+
         /// <summary>
         /// Process a JSON object into a dictionary
         /// </summary>
-        private static void ProcessJsonObject(JsonElement element, Dictionary<string, object> target)
+        private static void ProcessJsonObject(
+            JsonElement element,
+            Dictionary<string, object> target
+        )
         {
             foreach (JsonProperty property in element.EnumerateObject())
             {
                 target[property.Name] = ConvertJsonElement(property.Value);
             }
         }
-        
+
         /// <summary>
         /// Process a JSON array into a dictionary with numeric keys
         /// </summary>
@@ -86,17 +89,17 @@ namespace Shelltrac
         {
             int index = 0;
             var items = new List<object>();
-            
+
             foreach (JsonElement item in element.EnumerateArray())
             {
                 items.Add(ConvertJsonElement(item));
                 index++;
             }
-            
+
             // Store the actual list rather than numeric keys
             target["items"] = items;
         }
-        
+
         /// <summary>
         /// Convert a JsonElement to the appropriate .NET type
         /// </summary>
@@ -108,7 +111,7 @@ namespace Shelltrac
                     var objResult = new Dictionary<string, object>();
                     ProcessJsonObject(element, objResult);
                     return objResult;
-                
+
                 case JsonValueKind.Array:
                     var arrayResult = new List<object>();
                     foreach (JsonElement item in element.EnumerateArray())
@@ -116,26 +119,26 @@ namespace Shelltrac
                         arrayResult.Add(ConvertJsonElement(item));
                     }
                     return arrayResult;
-                
+
                 case JsonValueKind.String:
                     return element.GetString();
-                
+
                 case JsonValueKind.Number:
                     // Try to parse as Int32 first, then as double
                     if (element.TryGetInt32(out int intValue))
                         return intValue;
-                    
+
                     return element.GetDouble();
-                
+
                 case JsonValueKind.True:
                     return true;
-                
+
                 case JsonValueKind.False:
                     return false;
-                
+
                 case JsonValueKind.Null:
                     return null;
-                
+
                 default:
                     return element.ToString();
             }

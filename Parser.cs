@@ -82,7 +82,11 @@ namespace Shelltrac
                 return new ExpressionStmt(expr);
             } // unknown or end
             Token token = Peek();
-            throw new ParsingException($"Unexpected token '{token.Lexeme}' encountered.", Peek().Line, Peek().Column);
+            throw new ParsingException(
+                $"Unexpected token '{token.Lexeme}' encountered.",
+                Peek().Line,
+                Peek().Column
+            );
         }
 
         private Stmt ParseFunction()
@@ -330,7 +334,11 @@ namespace Shelltrac
             }
 
             if (braceCount != 0)
-                throw new ParsingException("Unbalanced braces in shell block.", Peek().Line, Peek().Column);
+                throw new ParsingException(
+                    "Unbalanced braces in shell block.",
+                    Peek().Line,
+                    Peek().Column
+                );
 
             // Extract the raw block (including outer braces)
             string rawBlock = _source.Substring(startPos, pos - startPos);
@@ -394,7 +402,11 @@ namespace Shelltrac
                 }
                 else
                 {
-                    throw new ParsingException("Expected variable name or _ in destructuring assignment", Peek().Line, Peek().Column);
+                    throw new ParsingException(
+                        "Expected variable name or _ in destructuring assignment",
+                        Peek().Line,
+                        Peek().Column
+                    );
                 }
             }
 
@@ -430,34 +442,39 @@ namespace Shelltrac
             else if (lhs is IndexExpr indexExpr)
                 return new IndexAssignStmt(indexExpr.Target, indexExpr.Index, valueExpr);
             else
-                throw new ParsingException($"Invalid assignment target {lhs}", Peek().Line, Peek().Column);
+                throw new ParsingException(
+                    $"Invalid assignment target {lhs}",
+                    Peek().Line,
+                    Peek().Column
+                );
         }
 
         // If and For also exist as Stmts for assignment!
         private Stmt ParseIf()
-{
-    // if expr { block } (else if expr { block })* (else { block })?
-    var condition = ParseExpression();
-    var thenBlock = ParseBlock();
-    List<Stmt>? elseBlock = null;
-    
-    if (Match(TokenType.ELSE))
-    {
-        // Check for "else if"
-        if (Match(TokenType.IF))
         {
-            // Parse the nested if statement
-            elseBlock = new List<Stmt> { ParseIf() };
+            // if expr { block } (else if expr { block })* (else { block })?
+            var condition = ParseExpression();
+            var thenBlock = ParseBlock();
+            List<Stmt>? elseBlock = null;
+
+            if (Match(TokenType.ELSE))
+            {
+                // Check for "else if"
+                if (Match(TokenType.IF))
+                {
+                    // Parse the nested if statement
+                    elseBlock = new List<Stmt> { ParseIf() };
+                }
+                else
+                {
+                    // Regular "else" block
+                    elseBlock = ParseBlock();
+                }
+            }
+
+            return new IfStmt(condition, thenBlock, elseBlock);
         }
-        else
-        {
-            // Regular "else" block
-            elseBlock = ParseBlock();
-        }
-    }
-    
-    return new IfStmt(condition, thenBlock, elseBlock);
-}
+
         private Stmt ParseFor()
         {
             // for i in expr..expr { block }
@@ -491,7 +508,11 @@ namespace Shelltrac
             string iteratorVar = iteratorToken.Lexeme;
             var inToken = Consume(TokenType.IDENTIFIER, "Expected 'in' after iterator variable");
             if (!inToken.Lexeme.Equals("in", StringComparison.OrdinalIgnoreCase))
-                throw new ParsingException("Expected 'in' after iterator variable in for expression", Peek().Line, Peek().Column);
+                throw new ParsingException(
+                    "Expected 'in' after iterator variable in for expression",
+                    Peek().Line,
+                    Peek().Column
+                );
             var iterable = ParseExpression();
             var body = ParseBlock();
             return new ForExpr(iteratorVar, iterable, body);
@@ -509,7 +530,9 @@ namespace Shelltrac
             var inToken = Consume(TokenType.IDENTIFIER, "Expected 'in' after iterator variable");
             if (!inToken.Lexeme.Equals("in", StringComparison.OrdinalIgnoreCase))
                 throw new ParsingException(
-                    "Expected 'in' after iterator variable in parallel for expression", Peek().Line, Peek().Column
+                    "Expected 'in' after iterator variable in parallel for expression",
+                    Peek().Line,
+                    Peek().Column
                 );
             var iterable = ParseExpression();
             var body = ParseBlock();
@@ -641,10 +664,11 @@ namespace Shelltrac
                 Consume(TokenType.FOR, "Expected 'for' after 'parallel'");
                 return ParseParallelForExpr();
             }
-            if (Match(TokenType.LPAREN)) {
-              Expr expr = ParseExpression();
-        Consume(TokenType.RPAREN, "Expected ')' after expression.");
-        return expr;
+            if (Match(TokenType.LPAREN))
+            {
+                Expr expr = ParseExpression();
+                Consume(TokenType.RPAREN, "Expected ')' after expression.");
+                return expr;
             }
 
             if (Match(TokenType.LBRACKET))
@@ -705,7 +729,9 @@ namespace Shelltrac
                     // If it's not a dictionary, then it must be a block.
                     // Depending on your DSL, you might handle inline blocks differently.
                     throw new ParsingException(
-                        "ParsePrimary matched a {, did a lookahead check, decided it wasn't a dict and so wants to parse a block.  Does the grammar support this??", Peek().Line, Peek().Column
+                        "ParsePrimary matched a {, did a lookahead check, decided it wasn't a dict and so wants to parse a block.  Does the grammar support this??",
+                        Peek().Line,
+                        Peek().Column
                     );
                 }
             }
@@ -715,7 +741,9 @@ namespace Shelltrac
             /*}*/
 
             throw new ParsingException(
-                $"Unexpected token '{Peek().Lexeme}' in expression at line " + Peek().Line, Peek().Line, Peek().Column
+                $"Unexpected token '{Peek().Lexeme}' in expression at line " + Peek().Line,
+                Peek().Line,
+                Peek().Column
             );
         }
 
@@ -891,7 +919,11 @@ namespace Shelltrac
         {
             if (Check(type))
                 return Advance();
-            throw new ParsingException($"{message} (got token {type} on line {Peek().Line})", Peek().Line, Peek().Column);
+            throw new ParsingException(
+                $"{message} (got token {type} on line {Peek().Line})",
+                Peek().Line,
+                Peek().Column
+            );
         }
     }
 }
