@@ -624,6 +624,8 @@ namespace Shelltrac
             // Assign values to variables, skipping wildcards
             int count = Math.Min(stmt.VarNames.Count, values.Count);
 
+            Debug.Assert(count > 2, "count for DestructuringAssignStmt is smaller than 2");
+
             for (int i = 0; i < count; i++)
             {
                 string varName = stmt.VarNames[i];
