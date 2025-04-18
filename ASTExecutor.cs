@@ -859,7 +859,19 @@ namespace Shelltrac
 
                     case ShellExpr shellCall:
                         object cmdObj = Eval(shellCall.Argument);
-                        string command = cmdObj?.ToString() ?? "";
+                        string command;
+
+                        // If it's already a string, use it directly
+                        if (cmdObj is string cmdStr)
+                        {
+                            command = cmdStr;
+                        }
+                        else
+                        {
+                            // Otherwise convert to string
+                            command = cmdObj?.ToString() ?? "";
+                        }
+
                         return ExecuteShellCommand(command, expr.Line, expr.Column);
                 }
 
@@ -1166,7 +1178,8 @@ namespace Shelltrac
                     UseShellExecute = false,
                     CreateNoWindow = true,
                 };
-                Console.WriteLine($"executing bash with: {psi.Arguments}");
+
+                //Console.WriteLine($"executing bash with: {psi.Arguments}");
                 var sw = Stopwatch.StartNew();
                 using var proc = Process.Start(psi);
                 int pid = proc.Id;

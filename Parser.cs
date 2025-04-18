@@ -343,9 +343,10 @@ namespace Shelltrac
             // Extract the raw block (including outer braces)
             string rawBlock = _source.Substring(startPos, pos - startPos);
 
-            // Optionally, trim off the outer braces:
+            // Trim off the outer braces:
+            string shellContent = "";
             if (rawBlock.StartsWith("{") && rawBlock.EndsWith("}"))
-                rawBlock = rawBlock.Substring(1, rawBlock.Length - 2).Trim();
+                shellContent = rawBlock.Substring(1, rawBlock.Length - 2).Trim();
 
             // Now, update the token pointer to skip over tokens that fall inside the shell block.
             while (_current < _tokens.Count && _tokens[_current].StartIndex < pos)
@@ -353,7 +354,118 @@ namespace Shelltrac
                 _current++;
             }
 
-            return new LiteralExpr(rawBlock);
+            // Check if the content contains Shelltrac interpolation syntax
+            if (shellContent.Contains("#{"))
+            {
+                // Parse it as an interpolated shell command
+                return ParseShellWithInterpolation(shellContent, openBrace.Line);
+            }
+            else
+            {
+                // No interpolation, return as literal
+                return new LiteralExpr(shellContent);
+            }
+        }
+
+        private Expr ParseShellWithInterpolation(string shellContent, int line)
+        {
+            List<Expr> parts = new List<Expr>();
+            int pos = 0;
+
+            while (pos < shellContent.Length)
+            {
+                // Find the next interpolation pattern
+                int interpStart = shellContent.IndexOf("#{", pos);
+
+                if (interpStart == -1)
+                {
+                    // No more interpolation, add the rest as literal
+                    if (pos < shellContent.Length)
+                    {
+                        parts.Add(new LiteralExpr(shellContent.Substring(pos)));
+                    }
+                    break;
+                }
+
+                // Add text before the interpolation as literal
+                if (interpStart > pos)
+                {
+                    parts.Add(new LiteralExpr(shellContent.Substring(pos, interpStart - pos)));
+                }
+
+                // Find the closing brace - careful to handle nested braces
+                int interpEnd = interpStart + 2;
+                int braceCount = 1;
+                while (interpEnd < shellContent.Length && braceCount > 0)
+                {
+                    if (shellContent[interpEnd] == '{')
+                        braceCount++;
+                    else if (shellContent[interpEnd] == '}')
+                        braceCount--;
+                    interpEnd++;
+                }
+
+                if (braceCount > 0)
+                    throw new ParsingException(
+                        "Unterminated interpolation in shell block",
+                        line,
+                        0
+                    );
+
+                interpEnd--; // Move back to the actual closing brace
+
+                // Extract the expression inside #{}
+                string exprText = shellContent.Substring(
+                    interpStart + 2,
+                    interpEnd - (interpStart + 2)
+                );
+
+                // Create a simple variable expression if it's just a variable name
+                if (IsValidIdentifier(exprText))
+                {
+                    parts.Add(new VarExpr(exprText) { Line = line });
+                }
+                else
+                {
+                    // For more complex expressions, we'd need to fully parse them
+                    // This is simplified - in a real implementation you'd parse the expression properly
+                    throw new ParsingException(
+                        "Complex expressions in shell interpolation not yet supported",
+                        line,
+                        0
+                    );
+                }
+
+                // Move past the closing brace
+                pos = interpEnd + 1;
+            }
+
+            // If there's only one part and it's a literal, return it directly
+            if (parts.Count == 1 && parts[0] is LiteralExpr)
+            {
+                return parts[0];
+            }
+
+            // Otherwise, create an interpolated string expression
+            return new InterpolatedStringExpr(parts) { Line = line };
+        }
+
+        private bool IsValidIdentifier(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+                return false;
+
+            // Check if the text is a valid identifier (simple variable name)
+            if (!char.IsLetter(text[0]) && text[0] != '_')
+                return false;
+
+            for (int i = 1; i < text.Length; i++)
+            {
+                if (!char.IsLetterOrDigit(text[i]) && text[i] != '_')
+                    return false;
+            }
+
+            return true;
         }
 
         private Stmt ParseVarDecl()
