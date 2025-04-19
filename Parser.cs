@@ -31,6 +31,9 @@ namespace Shelltrac
 
         private Stmt ParseStatement()
         {
+            // first eat all the ; that may be left over from a previous line
+            while (Match(TokenType.SEMICOLON)) { }
+
             if (Match(TokenType.TASK))
                 return ParseTask();
             if (Match(TokenType.ON))
@@ -701,6 +704,7 @@ namespace Shelltrac
             {
                 var op = Previous().Lexeme; // Get the operator
                 var right = ParseTerm();
+
                 expr = new BinaryExpr(expr, op, right);
             }
 
@@ -851,6 +855,7 @@ namespace Shelltrac
             /*if (Match(TokenType.DOT)) {*/
             /*  return ParsePostfix(expr);*/
             /*}*/
+
 
             throw new ParsingException(
                 $"Unexpected token '{Peek().Lexeme}' in expression at line " + Peek().Line,
