@@ -704,6 +704,20 @@ namespace Shelltrac
                 // Track expression location for error reporting
                 _context.PushLocation(expr);
 
+                if (expr is LambdaExpr lambda)
+                {
+                    // capture current variables
+                    var closure = _context.GetAllVariables();
+
+                    var lambdaDecl = new FunctionStmt("<lambda>", lambda.Parameters, lambda.Body)
+                    {
+                        Line = expr.Line,
+                        Column = expr.Column,
+                    };
+
+                    return new Function(lambdaDecl, closure);
+                }
+
                 switch (expr)
                 {
                     case LiteralExpr lit:

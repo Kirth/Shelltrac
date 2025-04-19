@@ -743,6 +743,11 @@ namespace Shelltrac
 
         private Expr ParsePrimary()
         {
+            if (Match(TokenType.FN))
+            {
+                return ParseLambdaExpr();
+            }
+
             if (Match(TokenType.STRING))
             {
                 return new LiteralExpr(Previous().Lexeme);
@@ -862,6 +867,29 @@ namespace Shelltrac
                 Peek().Line,
                 Peek().Column
             );
+        }
+
+        private Expr ParseLambdaExpr()
+        {
+            // 'fn' already consumed
+            Consume(TokenType.LPAREN, "Expected '(' after 'fn' in lambda");
+            var parameters = new List<string>();
+            if (!Check(TokenType.RPAREN))
+            {
+                do
+                {
+                    var param = Consume(TokenType.IDENTIFIER, "Expected lambda parameter").Lexeme;
+                    parameters.Add(param);
+                } while (Match(TokenType.COMMA));
+            }
+            Consume(TokenType.RPAREN, "Expected ')' after lambda parameters");
+
+            var body = ParseBlock();
+            return new LambdaExpr(parameters, body)
+            {
+                Line = Previous().Line,
+                Column = Previous().Column,
+            };
         }
 
         private Expr ParseInterpolatedString()

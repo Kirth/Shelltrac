@@ -108,6 +108,19 @@ namespace Shelltrac
         }
     }
 
+    // represents an inline fn(a,b){ … } expression
+    public class LambdaExpr : Expr
+    {
+        public List<string> Parameters { get; }
+        public List<Stmt> Body { get; }
+
+        public LambdaExpr(List<string> parameters, List<Stmt> body)
+        {
+            Parameters = parameters;
+            Body = body;
+        }
+    }
+
     public class ReturnStmt : Stmt
     {
         public List<Expr> Values { get; }
