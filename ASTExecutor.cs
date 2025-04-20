@@ -240,6 +240,85 @@ namespace Shelltrac
                     return null;
                 }
             );
+
+            _context.GlobalScope.Variables["instantiate"] = new BuiltinFunction(
+                "instantiate",
+                (exec, args) =>
+                {
+                    if (args.Count < 1 || args.Count > 2)
+                        throw new RuntimeException(
+                            "instantiate(typeName[, ctorArgs]) expects 1 or 2 args",
+                            exec.Context.CurrentLocation.Line,
+                            exec.Context.CurrentLocation.Column
+                        );
+
+                    string typeName = args[0]?.ToString() ?? "";
+                    Type? type = Type.GetType(typeName);
+
+                    // search loaded assemblies for the type
+                    if (type == null)
+                    {
+                        type = AppDomain
+                            .CurrentDomain.GetAssemblies()
+                            .Select(a => a.GetType(typeName))
+                            .FirstOrDefault(t => t != null);
+                    }
+
+                    // try loading the assembly based on namespace (before last dot)
+                    if (type == null && typeName.Contains("."))
+                    {
+                        var asmName = typeName.Substring(0, typeName.LastIndexOf('.'));
+                        try
+                        {
+                            var asm = Assembly.Load(asmName);
+                            type = asm.GetType(typeName);
+                        }
+                        catch
+                        { /* swallow load errors */
+                        }
+                    }
+
+                    if (type == null)
+                        throw new RuntimeException(
+                            $"Type to instantiate '{typeName}' not found",
+                            exec.Context.CurrentLocation.Line,
+                            exec.Context.CurrentLocation.Column
+                        );
+
+                    // handle ctor args
+                    object?[] ctorArgs = Array.Empty<object?>();
+                    if (args.Count == 2)
+                    {
+                        if (args[1] is List<object?> list)
+                            ctorArgs = list.ToArray();
+                        else
+                            throw new RuntimeException(
+                                "Second argument to `instantiate` must be an array",
+                                exec.Context.CurrentLocation.Line,
+                                exec.Context.CurrentLocation.Column
+                            );
+                    }
+
+                    // pick a ctor matching arg count
+                    var ctor =
+                        type.GetConstructors()
+                            .FirstOrDefault(c => c.GetParameters().Length == ctorArgs.Length)
+                        ?? throw new RuntimeException(
+                            $"No constructor on '{typeName}' with {ctorArgs.Length} args",
+                            exec.Context.CurrentLocation.Line,
+                            exec.Context.CurrentLocation.Column
+                        );
+
+                    // convert & invoke
+                    var pars = ctor.GetParameters();
+                    var converted = new object?[ctorArgs.Length];
+                    for (int i = 0; i < ctorArgs.Length; i++)
+                        converted[i] = Convert.ChangeType(ctorArgs[i], pars[i].ParameterType);
+
+                    return ctor.Invoke(converted);
+                }
+            );
+            ;
         }
 
         public void PushEnvironment(Dictionary<string, object?> env)
