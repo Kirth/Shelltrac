@@ -4,7 +4,6 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using System.Linq.Expressions;
 using System.Reflection; // just for BindingFlags
 using System.Text;
 using System.Threading;
@@ -1174,13 +1173,7 @@ namespace Shelltrac
             }
         }
 
-        /// <summary>
-        /// Bind a member access (obj.Member) by looking for:
-        /// 1) instance methods
-        /// 2) public properties
-        /// 3) extension methods (including generic LINQ methods)
-        /// </summary>
-        private object BindMember(object parent, string memberName)
+        private object? BindMember(object parent, string memberName)
         {
             if (parent == null)
                 throw new RuntimeException(
@@ -1191,7 +1184,7 @@ namespace Shelltrac
 
             var type = parent.GetType();
 
-            // 1) Instance methods (ReflectionCallable)
+            // First, look for instance methods
             var instanceMethods = type.GetMethods(BindingFlags.Instance | BindingFlags.Public)
                 .Where(m => string.Equals(m.Name, memberName, StringComparison.OrdinalIgnoreCase))
                 .ToList();
@@ -1201,24 +1194,24 @@ namespace Shelltrac
                 return new ReflectionCallable(parent, instanceMethods);
             }
 
-            // 2) Properties (e.g. List<T>.Count, string.Length, etc.)
-            var property = type.GetProperty(
-                memberName,
-                BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase
-            );
-            if (property != null)
-            {
-                return property.GetValue(parent);
-            }
-
-            // 3) Extension methods (includes LINQ: Select, Where, ToList, etc.)
+            // Generalized extension search
             var extMethods = FindExtensionMethods(type, memberName);
             if (extMethods.Any())
             {
                 return new ExtensionMethodCallable(parent, extMethods);
             }
 
-            // 4) Nothing matched
+            // Fall back to properties
+            var property = type.GetProperty(
+                memberName,
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase
+            );
+
+            if (property != null)
+            {
+                return property.GetValue(parent);
+            }
+
             throw new RuntimeException(
                 $"Member '{memberName}' not found on object of type {type.Name}",
                 _context.CurrentLocation.Line,
@@ -1414,49 +1407,40 @@ namespace Shelltrac
                 return methods;
 
             methods = new List<MethodInfo>();
-            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-            foreach (var type in asm.GetTypes())
+
+            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
             {
-                if (!type.IsAbstract || !type.IsSealed)
-                    continue; // only static classes
-
-                foreach (var m in type.GetMethods(BindingFlags.Static | BindingFlags.Public))
+                foreach (var type in assembly.GetTypes())
                 {
-                    if (!m.Name.Equals(methodName, StringComparison.OrdinalIgnoreCase))
-                        continue;
-                    var pars = m.GetParameters();
-                    if (pars.Length == 0)
+                    // Only consider static classes
+                    if (!type.IsAbstract || !type.IsSealed)
                         continue;
 
-                    var first = pars[0].ParameterType;
-
-                    // 1) exact assignable (non‐generic):
-                    if (!first.ContainsGenericParameters && first.IsAssignableFrom(targetType))
+                    foreach (
+                        var method in type.GetMethods(BindingFlags.Static | BindingFlags.Public)
+                    )
                     {
-                        methods.Add(m);
-                        continue;
-                    }
-
-                    // 2) open‐generic: e.g. first = IEnumerable<T>
-                    if (first.IsGenericType && first.ContainsGenericParameters)
-                    {
-                        var genericDef = first.GetGenericTypeDefinition();
-                        // does targetType implement that interface?
                         if (
-                            targetType.IsGenericType
-                                && targetType.GetGenericTypeDefinition() == genericDef
-                            || targetType
-                                .GetInterfaces()
-                                .Any(i =>
-                                    i.IsGenericType && i.GetGenericTypeDefinition() == genericDef
-                                )
+                            !string.Equals(
+                                method.Name,
+                                methodName,
+                                StringComparison.OrdinalIgnoreCase
+                            )
                         )
+                            continue;
+
+                        var parameters = method.GetParameters();
+                        if (parameters.Length == 0)
+                            continue;
+
+                        if (parameters[0].ParameterType.IsAssignableFrom(targetType))
                         {
-                            methods.Add(m);
+                            methods.Add(method);
                         }
                     }
                 }
             }
+
             _extMethodCache[key] = methods;
             return methods;
         }
@@ -1742,109 +1726,63 @@ namespace Shelltrac
 
         public object? Call(Executor executor, List<object?> arguments)
         {
-            // 1) Pick overloads by arity
-            var name = _methods.First().Name;
-            var cands = _methods
-                .Where(m => m.GetParameters().Length == arguments.Count + 1)
-                .ToList();
-            if (!cands.Any())
+            // Choose an overload that takes arguments.Count + 1 parameters
+            MethodInfo? method = _methods.FirstOrDefault(m =>
+                m.GetParameters().Length == arguments.Count + 1
+            );
+
+            if (method == null)
                 throw new RuntimeException(
-                    $"No extension method '{name}' for type {_target.GetType().Name} accepts {arguments.Count} args",
+                    $"No extension method found for {_target.GetType().Name} with {arguments.Count} arguments",
                     executor.Context.CurrentLocation.Line,
                     executor.Context.CurrentLocation.Column
                 );
 
-            MethodInfo method = cands.First();
-
-            // 2) Close generics if needed (e.g. Enumerable.Select<TSource, TResult>)
-            if (method.IsGenericMethodDefinition)
-            {
-                // figure out TSource from the target (List<T> or IQueryable<T> etc.)
-                Type targetType = _target.GetType();
-                // assume first parameter is IEnumerable<TSource>
-                Type enumIface = method.GetParameters()[0].ParameterType.GetGenericTypeDefinition();
-                Type elementType;
-                if (targetType.IsGenericType && targetType.GetGenericTypeDefinition() == enumIface)
-                    elementType = targetType.GetGenericArguments()[0];
-                else
-                    elementType = targetType
-                        .GetInterfaces()
-                        .First(i => i.IsGenericType && i.GetGenericTypeDefinition() == enumIface)
-                        .GetGenericArguments()[0];
-
-                // for Shelltrac we’ll project everything to object
-                Type resultType = typeof(object);
-
-                method = method.MakeGenericMethod(elementType, resultType);
-            }
-
-            // 3) Build invocation args (first slot = the instance)
-            var pars = method.GetParameters();
-            object?[] invokeArgs = new object?[pars.Length];
-            invokeArgs[0] = _target;
+            ParameterInfo[] parameters = method.GetParameters();
+            object?[] convertedArgs = new object?[arguments.Count + 1];
+            convertedArgs[0] = _target; // Inject the target
 
             for (int i = 0; i < arguments.Count; i++)
             {
-                Type pType = pars[i + 1].ParameterType;
-                var arg = arguments[i];
-
-                if (typeof(Delegate).IsAssignableFrom(pType) && arg is Callable shellFn)
+                try
                 {
-                    // wrap a Shelltrac Callable into the required delegate
-                    invokeArgs[i + 1] = CreateDelegateForShellFn(shellFn, executor, pType);
+                    convertedArgs[i + 1] = Convert.ChangeType(
+                        arguments[i],
+                        parameters[i + 1].ParameterType
+                    );
                 }
-                else
+                catch (Exception ex)
                 {
-                    // simple conversion (int, string, etc.)
-                    invokeArgs[i + 1] = Convert.ChangeType(arg, pType);
+                    throw new RuntimeException(
+                        $"Cannot convert argument {i + 1} from {arguments[i]?.GetType().Name ?? "null"} to {parameters[i + 1].ParameterType.Name}",
+                        executor.Context.CurrentLocation.Line,
+                        executor.Context.CurrentLocation.Column,
+                        innerException: ex
+                    );
                 }
             }
 
-            // 4) Invoke the static extension method
-            return method.Invoke(null, invokeArgs);
-        }
+            try
+            {
+                object? result = method.Invoke(null, convertedArgs);
 
-        // same helper as before, no changes needed
-        private static Delegate CreateDelegateForShellFn(
-            Callable shellFn,
-            Executor executor,
-            Type delegateType
-        )
-        {
-            var invokeInfo = delegateType.GetMethod("Invoke")!;
-            var paras = invokeInfo.GetParameters();
+                // If the result is already a collection that represents multiple values, return it directly
+                if (result is IEnumerable<object> objCollection && !(result is string))
+                {
+                    return objCollection.ToList();
+                }
 
-            // build lambda parameters
-            var paramExprs = paras
-                .Select(p => Expression.Parameter(p.ParameterType, p.Name))
-                .ToArray();
-
-            // pack into List<object>
-            var listType = typeof(List<object>);
-            var ctor = listType.GetConstructor(Type.EmptyTypes)!;
-            var addMethod = listType.GetMethod("Add")!;
-            var listInit = Expression.ListInit(
-                Expression.New(ctor),
-                paramExprs.Select(pe =>
-                    Expression.ElementInit(addMethod, Expression.Convert(pe, typeof(object)))
-                )
-            );
-
-            // call shellFn.Call(executor, list)
-            var callMethod = typeof(Callable).GetMethod("Call")!;
-            var shellFnConst = Expression.Constant(shellFn);
-            var execConst = Expression.Constant(executor, typeof(Executor));
-            var callExpr = Expression.Call(shellFnConst, callMethod, execConst, listInit);
-
-            // unwrap return
-            Expression body =
-                invokeInfo.ReturnType == typeof(void)
-                    ? Expression.Block(callExpr, Expression.Default(typeof(void)))
-                    : Expression.Convert(callExpr, invokeInfo.ReturnType);
-
-            // compile into the desired delegate
-            var lambda = Expression.Lambda(delegateType, body, paramExprs);
-            return lambda.Compile();
+                return result;
+            }
+            catch (TargetInvocationException tie)
+            {
+                throw new RuntimeException(
+                    "Extension method invocation failed: " + tie.InnerException?.Message,
+                    executor.Context.CurrentLocation.Line,
+                    executor.Context.CurrentLocation.Column,
+                    innerException: tie.InnerException
+                );
+            }
         }
     }
 }
