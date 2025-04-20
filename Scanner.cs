@@ -207,7 +207,14 @@ namespace Shelltrac
                     AddToken(TokenType.STAR, "*");
                     break;
                 case '-':
-                    AddToken(TokenType.MINUS, "-");
+                    if (Match('>'))
+                    {
+                        AddToken(TokenType.ARROW, "->");
+                    }
+                    else
+                    {
+                        AddToken(TokenType.MINUS, "-");
+                    }
                     break;
                 case '+':
                     AddToken(TokenType.PLUS, "+");

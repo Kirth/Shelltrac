@@ -743,8 +743,18 @@ namespace Shelltrac
 
         private Expr ParsePrimary()
         {
-            if (Match(TokenType.FN))
+            // lambda, multi param: (x,y,…) -> expr or {…}
+            if (Check(TokenType.LPAREN) && NextIsArrowAfterParams())
+                return ParseArrowLambdaMulti();
+
+            // lambda, single‐param: i -> expr or {…}
+            if (Check(TokenType.IDENTIFIER) && Peek(1).Type == TokenType.ARROW)
+                return ParseArrowLambda();
+
+            // anonymous fn: fn(param,…) { … }
+            if (Check(TokenType.FN) && Peek(1).Type == TokenType.LPAREN)
             {
+                Advance(); // consume 'fn'
                 return ParseLambdaExpr();
             }
 
@@ -867,6 +877,90 @@ namespace Shelltrac
                 Peek().Line,
                 Peek().Column
             );
+        }
+
+        private bool NextIsArrowAfterParams()
+        {
+            int depth = 0;
+            for (int i = _current; i < _tokens.Count; i++)
+            {
+                if (Peek(i).Type == TokenType.LPAREN)
+                    depth++;
+                else if (Peek(i).Type == TokenType.RPAREN && --depth == 0)
+                    return i + 1 < _tokens.Count && Peek(i + 1).Type == TokenType.ARROW;
+            }
+            return false;
+        }
+
+        private Expr ParseArrowLambda()
+        {
+            // 1. params
+            var parameters = new List<string>
+            {
+                Consume(TokenType.IDENTIFIER, "Expected parameter name").Lexeme,
+            };
+
+            // 2. arrow
+            Consume(TokenType.ARROW, "Expected '->' after parameter");
+
+            // 3. body: either a block or a single expression
+            List<Stmt>? stmts = null;
+            Expr? exprBody = null;
+
+            if (Check(TokenType.LBRACE))
+            {
+                // block form
+                stmts = ParseBlock(); // returns List<Stmt>
+            }
+            else
+            {
+                // single expression -> wrap into a one‑stmt block
+                exprBody = ParseExpression();
+            }
+
+            // build implicit-return block
+            if (exprBody != null)
+            {
+                // wrap it into a ReturnStmt so runtime sees it as the last value
+                var retStmt = new ReturnStmt(new List<Expr> { exprBody });
+                stmts = new List<Stmt> { retStmt };
+            }
+            return new LambdaExpr(parameters, stmts!)
+            {
+                Line = Previous().Line,
+                Column = Previous().Column,
+            };
+        }
+
+        private Expr ParseArrowLambdaMulti()
+        {
+            // already saw '('
+            var parameters = new List<string>();
+            if (!Check(TokenType.RPAREN))
+            {
+                do
+                {
+                    parameters.Add(Consume(TokenType.IDENTIFIER, "Expected param").Lexeme);
+                } while (Match(TokenType.COMMA));
+            }
+            Consume(TokenType.RPAREN, "Expected ')' after lambda params");
+            Consume(TokenType.ARROW, "Expected '->' after lambda params");
+
+            List<Stmt>? stmts = null;
+            Expr? expr = null;
+            if (Check(TokenType.LBRACE))
+                stmts = ParseBlock();
+            else
+                expr = ParseExpression();
+
+            if (expr != null)
+                stmts = new List<Stmt> { new ReturnStmt(new List<Expr> { expr }) };
+
+            return new LambdaExpr(parameters, stmts!)
+            {
+                Line = Previous().Line,
+                Column = Previous().Column,
+            };
         }
 
         private Expr ParseLambdaExpr()
