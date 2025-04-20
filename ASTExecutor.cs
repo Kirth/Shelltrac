@@ -829,7 +829,7 @@ namespace Shelltrac
                             return callable.Call(this, args);
                         }
                         throw new RuntimeException(
-                            "Attempted to call a non-function",
+                            $"Attempted to call a non-function '{callee}'",
                             expr.Line,
                             expr.Column
                         );

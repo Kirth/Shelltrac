@@ -745,11 +745,15 @@ namespace Shelltrac
         {
             // lambda, multi param: (x,y,…) -> expr or {…}
             if (Check(TokenType.LPAREN) && NextIsArrowAfterParams())
+            {
                 return ParseArrowLambdaMulti();
+            }
 
             // lambda, single‐param: i -> expr or {…}
             if (Check(TokenType.IDENTIFIER) && Peek(1).Type == TokenType.ARROW)
+            {
                 return ParseArrowLambda();
+            }
 
             // anonymous fn: fn(param,…) { … }
             if (Check(TokenType.FN) && Peek(1).Type == TokenType.LPAREN)
@@ -881,14 +885,25 @@ namespace Shelltrac
 
         private bool NextIsArrowAfterParams()
         {
-            int depth = 0;
-            for (int i = _current; i < _tokens.Count; i++)
+            // we know _tokens[_current] == LPAREN
+            int depth = 1;
+            // we don't use Peek() here because that returns false for EOF
+            for (int pos = _current + 1; pos < _tokens.Count; pos++)
             {
-                if (Peek(i).Type == TokenType.LPAREN)
+                var tok = _tokens[pos];
+                if (tok.Type == TokenType.LPAREN)
                     depth++;
-                else if (Peek(i).Type == TokenType.RPAREN && --depth == 0)
-                    return i + 1 < _tokens.Count && Peek(i + 1).Type == TokenType.ARROW;
+                else if (tok.Type == TokenType.RPAREN)
+                {
+                    depth--;
+                    if (depth == 0)
+                    {
+                        // matched the original '(', so look at the token after it
+                        return pos + 1 < _tokens.Count && _tokens[pos + 1].Type == TokenType.ARROW;
+                    }
+                }
             }
+            // never closed or no arrow after
             return false;
         }
 
