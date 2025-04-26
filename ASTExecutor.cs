@@ -217,11 +217,11 @@ namespace Shelltrac
         /// </summary>
         /// <param name="scriptPath">Path of the script being executed</param>
         /// <param name="sourceCode">Source code of the script</param>
-        public Executor(string scriptPath = null, string sourceCode = null)
+        public Executor(string scriptPath = "script", string sourceCode = "")
         {
-            _scriptPath = scriptPath ?? "script";
-            _sourceCode = sourceCode ?? "";
-            _context = new ExecutionContext(_scriptPath, _sourceCode);
+            _scriptPath = scriptPath;
+            _sourceCode = sourceCode;
+            _context = new ExecutionContext(scriptPath, sourceCode);
 
             // Register built-in functions in the global scope
             _context.GlobalScope.Variables["wait"] = new BuiltinFunction(
@@ -438,7 +438,7 @@ namespace Shelltrac
 
                     case VarDeclStmt vd:
                         // Always put in current scope
-                        object val = Eval(vd.Initializer);
+                        object val = Eval(vd.Initializer)!;
                         /* TODO: do we want to pull out the string result?
                          * atm we provide a ShellResult which' ToString-method
                          * exposes stdout by default
@@ -451,7 +451,7 @@ namespace Shelltrac
                         break;
 
                     case AssignStmt assignStmt:
-                        object rhsVal = Eval(assignStmt.ValueExpr);
+                        object rhsVal = Eval(assignStmt.ValueExpr)!;
                         if (!_context.AssignVariable(assignStmt.VarName, rhsVal))
                         {
                             throw new RuntimeException(
@@ -479,7 +479,7 @@ namespace Shelltrac
                         // Store function in the current scope
                         _context.CurrentScope.Variables[func.Name] = new Function(
                             func,
-                            new Dictionary<string, object>(_context.CurrentScope.Variables)
+                            new Dictionary<string, object?>(_context.CurrentScope.Variables)
                         );
                         break;
 
@@ -617,7 +617,7 @@ namespace Shelltrac
         private void HandleInvocation(InvocationStmt inv)
         {
             // Evaluate the argument expression
-            object val = Eval(inv.Argument);
+            object val = Eval(inv.Argument)!;
 
             switch (inv.CommandKeyword)
             {
@@ -650,9 +650,9 @@ namespace Shelltrac
 
         private void HandleIndexAssign(IndexAssignStmt stmt)
         {
-            object target = Eval(stmt.Target);
-            object index = Eval(stmt.Index);
-            object value = Eval(stmt.ValueExpr);
+            object target = Eval(stmt.Target)!;
+            object index = Eval(stmt.Index)!;
+            object value = Eval(stmt.ValueExpr)!;
 
             // Support dictionary assignment
             if (target is IDictionary<string, object> dict)
@@ -725,8 +725,8 @@ namespace Shelltrac
 
         private void HandleIf(IfStmt ifs)
         {
-            object condVal = Eval(ifs.Condition);
-            bool condition = ConvertToBool(condVal);
+            object condVal = Eval(ifs.Condition)!;
+            bool condition = ConvertToBool(condVal)!;
 
             if (condition)
             {
@@ -740,7 +740,7 @@ namespace Shelltrac
 
         private void HandleFor(ForStmt fs)
         {
-            object iterable = Eval(fs.Iterable);
+            object iterable = Eval(fs.Iterable)!;
 
             if (!(iterable is IEnumerable enumerable))
             {
@@ -811,15 +811,15 @@ namespace Shelltrac
                         return lit.Value;
 
                     case InterpolatedStringExpr interp:
-                    {
-                        var sb = new StringBuilder();
-                        foreach (var part in interp.Parts)
                         {
-                            object? value = Eval(part);
-                            sb.Append(value?.ToString() ?? "");
+                            var sb = new StringBuilder();
+                            foreach (var part in interp.Parts)
+                            {
+                                object? value = Eval(part);
+                                sb.Append(value?.ToString() ?? "");
+                            }
+                            return sb.ToString();
                         }
-                        return sb.ToString();
-                    }
 
                     case VarExpr v:
                         return _context.LookupVariable(v.Name);
@@ -843,7 +843,7 @@ namespace Shelltrac
                         );
 
                     case MemberAccessExpr memberExpr:
-                        object parent = Eval(memberExpr.Object);
+                        object parent = Eval(memberExpr.Object)!;
                         return BindMember(parent, memberExpr.MemberName);
 
                     case ArrayExpr arr:
@@ -853,45 +853,45 @@ namespace Shelltrac
                         return list;
 
                     case IfExpr ifExpr:
-                    {
-                        var condVal = Eval(ifExpr.Condition);
-                        bool condition = ConvertToBool(condVal);
-                        if (condition)
-                            return EvaluateBlockExpression(ifExpr.ThenBlock);
-                        else if (ifExpr.ElseBlock != null)
-                            return EvaluateBlockExpression(ifExpr.ElseBlock);
-                        else
-                            return null;
-                    }
+                        {
+                            var condVal = Eval(ifExpr.Condition)!;
+                            bool condition = ConvertToBool(condVal);
+                            if (condition)
+                                return EvaluateBlockExpression(ifExpr.ThenBlock);
+                            else if (ifExpr.ElseBlock != null)
+                                return EvaluateBlockExpression(ifExpr.ElseBlock);
+                            else
+                                return null;
+                        }
 
                     case ForExpr forExpr:
-                    {
-                        var iterable = Eval(forExpr.Iterable);
-                        if (!(iterable is IEnumerable en))
-                            throw new RuntimeException(
-                                "For expression must iterate over an enumerable",
-                                forExpr.Line,
-                                forExpr.Column
-                            );
-
-                        var results = new List<object?>();
-                        foreach (object item in en)
                         {
-                            _context.PushScope();
-                            _context.CurrentScope.Variables[forExpr.IteratorVar] = item;
+                            var iterable = Eval(forExpr.Iterable);
+                            if (!(iterable is IEnumerable en))
+                                throw new RuntimeException(
+                                    "For expression must iterate over an enumerable",
+                                    forExpr.Line,
+                                    forExpr.Column
+                                );
 
-                            try
+                            var results = new List<object?>();
+                            foreach (object item in en)
                             {
-                                var value = EvaluateBlockExpression(forExpr.Body);
-                                results.Add(value);
+                                _context.PushScope();
+                                _context.CurrentScope.Variables[forExpr.IteratorVar] = item;
+
+                                try
+                                {
+                                    var value = EvaluateBlockExpression(forExpr.Body);
+                                    results.Add(value);
+                                }
+                                finally
+                                {
+                                    _context.PopScope();
+                                }
                             }
-                            finally
-                            {
-                                _context.PopScope();
-                            }
+                            return results;
                         }
-                        return results;
-                    }
 
                     case ParallelForExpr pf:
                         return EvalParallelFor(pf);
@@ -914,8 +914,8 @@ namespace Shelltrac
                         return map;
 
                     case IndexExpr indexExpr:
-                        object target = Eval(indexExpr.Target);
-                        object indexValue = Eval(indexExpr.Index);
+                        object target = Eval(indexExpr.Target)!;
+                        object indexValue = Eval(indexExpr.Index)!;
 
                         if (target is IList<object> tlist)
                         {
@@ -949,19 +949,19 @@ namespace Shelltrac
                         }
 
                     case RangeExpr rangeExpr:
-                    {
-                        object leftVal = Eval(rangeExpr.Start);
-                        object rightVal = Eval(rangeExpr.End);
-                        int start = ConvertToInt(leftVal);
-                        int end = ConvertToInt(rightVal);
-                        return new Range(start, end);
-                    }
+                        {
+                            object leftVal = Eval(rangeExpr.Start)!;
+                            object rightVal = Eval(rangeExpr.End)!;
+                            int start = ConvertToInt(leftVal)!;
+                            int end = ConvertToInt(rightVal)!;
+                            return new Range(start, end);
+                        }
 
                     case SshExpr sshExpr:
                         return ExecuteSshCommand(sshExpr);
 
                     case ShellExpr shellCall:
-                        object cmdObj = Eval(shellCall.Argument);
+                        object cmdObj = Eval(shellCall.Argument)!;
                         string command;
 
                         // If it's already a string, use it directly
@@ -1152,7 +1152,7 @@ namespace Shelltrac
                 }
             }
 
-            return hasOverride ? firstCancelResult : results.ToList();
+            return hasOverride ? firstCancelResult! : results.ToList();
         }
 
         private object? EvaluateBlockExpression(List<Stmt> block)
@@ -1229,8 +1229,8 @@ namespace Shelltrac
 
         private object EvalBinary(BinaryExpr bin)
         {
-            object leftVal = Eval(bin.Left);
-            object rightVal = Eval(bin.Right);
+            object leftVal = Eval(bin.Left)!;
+            object rightVal = Eval(bin.Right)!;
 
             switch (bin.Op)
             {
@@ -1283,7 +1283,7 @@ namespace Shelltrac
                 Pid = pid;
             }
 
-            public Dictionary<string, object> ParseJson()
+            public Dictionary<string, object?> ParseJson()
             {
                 return Stdout.ParseJson();
             }
@@ -1308,7 +1308,7 @@ namespace Shelltrac
 
                 //Console.WriteLine($"executing bash with: {psi.Arguments}");
                 var sw = Stopwatch.StartNew();
-                using var proc = Process.Start(psi);
+                using var proc = Process.Start(psi)!;
                 int pid = proc.Id;
                 proc.WaitForExit();
                 sw.Stop();
@@ -1348,7 +1348,7 @@ namespace Shelltrac
                 Duration = duration;
             }
 
-            public Dictionary<string, object> ParseJson()
+            public Dictionary<string, object?> ParseJson()
             {
                 return Stdout.ParseJson();
             }
@@ -1358,8 +1358,8 @@ namespace Shelltrac
 
         private SshResult ExecuteSshCommand(SshExpr sshExpr)
         {
-            object hostObj = Eval(sshExpr.Host);
-            object sshCmdObj = Eval(sshExpr.Command);
+            object hostObj = Eval(sshExpr.Host)!;
+            object sshCmdObj = Eval(sshExpr.Command)!;
             string host = hostObj?.ToString() ?? "";
             string sshCommand = EscapeForBashDoubleQuotes(sshCmdObj?.ToString() ?? "");
 
@@ -1687,9 +1687,9 @@ namespace Shelltrac
     public class Function : Callable
     {
         public FunctionStmt Declaration { get; }
-        public Dictionary<string, object> Closure { get; } // capture environment if needed
+        public Dictionary<string, object?> Closure { get; } // capture environment if needed
 
-        public Function(FunctionStmt declaration, Dictionary<string, object> closure)
+        public Function(FunctionStmt declaration, Dictionary<string, object?> closure)
         {
             Declaration = declaration;
             Closure = closure;
@@ -1698,7 +1698,7 @@ namespace Shelltrac
         public object? Call(Executor executor, List<object?> arguments)
         {
             // Create new environment (shallow copy of closure)
-            var localEnv = new Dictionary<string, object>(Closure);
+            var localEnv = new Dictionary<string, object?>(Closure);
             for (int i = 0; i < Declaration.Parameters.Count; i++)
             {
                 localEnv[Declaration.Parameters[i]] = i < arguments.Count ? arguments[i] : null;

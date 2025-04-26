@@ -62,7 +62,7 @@ namespace Shelltrac
                 Console.Write("shelltrac> ");
                 Console.ResetColor();
 
-                string input = ReadInputWithHistory()?.Trim();
+                string input = ReadInputWithHistory()?.Trim()!;
 
                 if (string.IsNullOrEmpty(input))
                     continue;
@@ -293,7 +293,7 @@ namespace Shelltrac
 
             for (int i = startIndex; i < _history.Count; i++)
             {
-                Console.WriteLine($"{i + 1, 3}: {_history[i]}");
+                Console.WriteLine($"{i + 1,3}: {_history[i]}");
             }
         }
 

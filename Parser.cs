@@ -83,10 +83,12 @@ namespace Shelltrac
                 Expr expr = ParseExpression();
                 Match(TokenType.SEMICOLON); // optional semicolon
                 return new ExpressionStmt(expr);
-            } // unknown or end
-            Token token = Peek();
+            }
+
+
+            // unknown or end
             throw new ParsingException(
-                $"Unexpected token '{token.Lexeme}' encountered.",
+                $"Unexpected token '{Peek().Lexeme}' encountered.",
                 Peek().Line,
                 Peek().Column
             );

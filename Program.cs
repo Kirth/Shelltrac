@@ -14,7 +14,7 @@ namespace Shelltrac
             var scriptArgument = new Argument<FileInfo>(
                 "script",
                 description: "Script file to execute",
-                getDefaultValue: () => null
+                getDefaultValue: () => null!
             );
 
             var debugOption = new Option<bool>("--debug", "Enable debug mode with verbose output");
