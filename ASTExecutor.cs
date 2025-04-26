@@ -1333,7 +1333,30 @@ namespace Shelltrac
             }
         }
 
-        private List<object?> ExecuteSshCommand(SshExpr sshExpr)
+        public class SshResult
+        {
+            public string Stdout { get; }
+            public string Stderr { get; }
+            public int ExitCode { get; }
+            public long Duration { get; }
+
+            public SshResult(string stdout, string stderr, int exitCode, long duration)
+            {
+                Stdout = stdout;
+                Stderr = stderr;
+                ExitCode = exitCode;
+                Duration = duration;
+            }
+
+            public Dictionary<string, object> ParseJson()
+            {
+                return Stdout.ParseJson();
+            }
+
+            public override string ToString() => Stdout.ToString();
+        }
+
+        private SshResult ExecuteSshCommand(SshExpr sshExpr)
         {
             object hostObj = Eval(sshExpr.Host);
             object sshCmdObj = Eval(sshExpr.Command);
@@ -1359,10 +1382,9 @@ namespace Shelltrac
                     exitCode = 1;
                 }
 
-                long latency = sw.ElapsedMilliseconds;
-                string hostStatus = stderr.Length > 0 ? "error" : "connected";
+                long duration = sw.ElapsedMilliseconds;
 
-                return new List<object?> { output, stderr, exitCode, hostStatus, latency };
+                return new SshResult(output, stderr, exitCode, duration);
             }
             catch (Exception e)
             {
