@@ -439,6 +439,14 @@ namespace Shelltrac
                     case VarDeclStmt vd:
                         // Always put in current scope
                         object val = Eval(vd.Initializer);
+                        /* TODO: do we want to pull out the string result?
+                         * atm we provide a ShellResult which' ToString-method
+                         * exposes stdout by default
+                         *
+                        if (val is ShellResult)
+                        {
+                            val = (val as ShellResult).Stdout;
+                        } */
                         _context.CurrentScope.Variables[vd.VarName] = val;
                         break;
 
@@ -1258,8 +1266,32 @@ namespace Shelltrac
         #endregion
 
         #region Shell Command Execution
+        public class ShellResult
+        {
+            public string Stdout { get; }
+            public string Stderr { get; }
+            public int ExitCode { get; }
+            public long Duration { get; }
+            public int Pid { get; }
 
-        private List<object?> ExecuteShellCommand(string command, int line, int column)
+            public ShellResult(string stdout, string stderr, int exitCode, long duration, int pid)
+            {
+                Stdout = stdout;
+                Stderr = stderr;
+                ExitCode = exitCode;
+                Duration = duration;
+                Pid = pid;
+            }
+
+            public Dictionary<string, object> ParseJson()
+            {
+                return Stdout.ParseJson();
+            }
+
+            public override string ToString() => Stdout.ToString();
+        }
+
+        private ShellResult ExecuteShellCommand(string command, int line, int column)
         {
             try
             {
@@ -1292,7 +1324,7 @@ namespace Shelltrac
                     );
                 }
                 // Return multiple values
-                return new List<object?> { stdout, stderr, exitCode, duration, pid };
+                return new ShellResult(stdout, stderr, exitCode, duration, pid);
             }
             catch (Exception e)
             {

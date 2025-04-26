@@ -11,7 +11,7 @@ namespace Shelltrac
         /// </summary>
         /// <param name="json">The JSON string to parse</param>
         /// <returns>A Dictionary representing the parsed JSON</returns>
-        public static Dictionary<string, object> FromJson(this string json)
+        public static Dictionary<string, object> ParseJson(this string json)
         {
             try
             {
@@ -54,11 +54,11 @@ namespace Shelltrac
         /// <param name="json">The JSON string to parse</param>
         /// <param name="result">The resulting dictionary if successful</param>
         /// <returns>True if parsing was successful, false otherwise</returns>
-        public static bool TryFromJson(this string json, out Dictionary<string, object> result)
+        public static bool TryParseJson(this string json, out Dictionary<string, object> result)
         {
             try
             {
-                result = FromJson(json);
+                result = ParseJson(json);
                 return true;
             }
             catch
