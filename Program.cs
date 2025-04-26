@@ -113,9 +113,8 @@ namespace Shelltrac
                         if (startRepl)
                         {
                             Console.WriteLine(
-                                "\nScript had errors, REPL mode will start with a fresh environment."
+                                "\nScript had errors, REPL will be started in a dodgy environment."
                             );
-                            executor = null;
                         }
                         else
                         {
@@ -130,7 +129,7 @@ namespace Shelltrac
                     if (scriptFile != null && executor != null)
                     {
                         Console.WriteLine(
-                            "\nScript execution complete. Entering REPL mode with script context..."
+                            "\n================\nScript execution complete. Entering REPL mode with script context..."
                         );
                     }
                     else
@@ -208,18 +207,12 @@ namespace Shelltrac
                 Console.WriteLine(ex.InnerException.Message);
                 Console.ResetColor();
 
-                if (debugMode)
-                {
-                    Console.WriteLine("\nInner Exception Stack Trace:");
-                    Console.WriteLine(ex.InnerException.StackTrace);
-                }
+                Console.WriteLine("\nInner Exception Stack Trace:");
+                Console.WriteLine(ex.InnerException.StackTrace);
             }
 
-            if (debugMode)
-            {
-                Console.WriteLine("\nException Stack Trace:");
-                Console.WriteLine(ex.StackTrace);
-            }
+            Console.WriteLine("\nException Stack Trace:");
+            Console.WriteLine(ex.StackTrace);
         }
 
         static string FormatTimeSpan(TimeSpan ts)
