@@ -359,10 +359,55 @@ namespace Shelltrac
     public class ShellExpr : Expr
     {
         public Expr Argument { get; }
+        public ParserConfig Parser { get; }
 
-        public ShellExpr(Expr arg)
+        public ShellExpr(Expr arg, ParserConfig parser = null)
         {
             Argument = arg;
+            Parser = parser;
+        }
+    }
+
+    public abstract class ParserConfig { }
+
+    public class FunctionParserConfig : ParserConfig
+    {
+        public LambdaExpr LineProcessor { get; }
+
+        public FunctionParserConfig(LambdaExpr lineProcessor)
+        {
+            LineProcessor = lineProcessor;
+        }
+    }
+
+    public class ObjectParserConfig : ParserConfig
+    {
+        public LambdaExpr Setup { get; }
+        public LambdaExpr LineProcessor { get; }
+        public LambdaExpr? Complete { get; }
+        public LambdaExpr? ErrorHandler { get; }
+
+        public ObjectParserConfig(
+            LambdaExpr setup,
+            LambdaExpr lineProcessor,
+            LambdaExpr? complete = null,
+            LambdaExpr? errorHandler = null)
+        {
+            Setup = setup;
+            LineProcessor = lineProcessor;
+            Complete = complete;
+            ErrorHandler = errorHandler;
+        }
+    }
+
+    // Format-specific shortcuts: parse as json|csv
+    public class FormatParserConfig : ParserConfig
+    {
+        public string Format { get; }
+
+        public FormatParserConfig(string format)
+        {
+            Format = format;
         }
     }
 
@@ -431,6 +476,21 @@ namespace Shelltrac
         public DictExpr(List<(Expr Key, Expr Value)> pairs)
         {
             Pairs = pairs;
+        }
+
+        public Expr? ExtractStringKey(string key)
+        {
+
+            foreach (var kv in Pairs)
+            {
+                if (kv.Key is String)
+                {
+
+                    Console.WriteLine($"extractstringkey {key} {kv}");
+                }
+            }
+
+            return null;
         }
     }
 }

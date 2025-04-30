@@ -69,6 +69,10 @@ namespace Shelltrac
 
         FN,
         RETURN,
+
+        PARSE,
+        WITH,
+        AS,
     }
 
     public class Token
@@ -577,9 +581,20 @@ namespace Shelltrac
                 case "return":
                     AddToken(TokenType.RETURN, text);
                     break;
+                case "parse":
+                    AddToken(TokenType.PARSE, text);
+                    break;
+                case "with":
+                    AddToken(TokenType.WITH, text);
+                    break;
+                case "as":
+                    AddToken(TokenType.AS, text);
+                    break;
                 default:
                     AddToken(TokenType.IDENTIFIER, sb.ToString());
                     break;
+
+
             }
         }
 

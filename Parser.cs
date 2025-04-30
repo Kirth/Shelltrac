@@ -839,7 +839,13 @@ namespace Shelltrac
                     arg = ParseShellBlock();
                 else
                     arg = ParseExpression(); // expects a literal string like "ls -ltrha"
-                return new ShellExpr(arg);
+
+                ParserConfig parseConfig = null;
+                if (Match(TokenType.PARSE))
+                {
+                    parseConfig = ParseShellParseConfig(arg);
+                }
+                return new ShellExpr(arg, parseConfig);
             }
             if (Match(TokenType.SSH))
             {
@@ -884,6 +890,62 @@ namespace Shelltrac
                 Peek().Column
             );
         }
+
+        private ParserConfig ParseShellParseConfig(Expr shellCommand)
+        {
+            // Handle 'parse with' or 'parse as' syntax
+            if (Match(TokenType.WITH))
+            {
+                // Function parser: fn(line) { ... }
+                if (Match(TokenType.FN))
+                {
+                    return new FunctionParserConfig(ParseLambdaExpr() as LambdaExpr);
+                }
+                // Object parser: { setup: fn() {...}, line: fn() {...}, ... }
+                else if (Check(TokenType.LBRACE))
+                {
+                    var dict = ParseDictionary() as DictExpr;
+                    var setup = dict.ExtractStringKey("setup");
+                    var line = dict.ExtractStringKey("line");
+                    var complete = dict.ExtractStringKey("complete");
+                    // TODO: wow dict.Pairs is a List<Expr, Expr>, do we want objects to be able to be keys because those need to get evalled sometimes
+
+                    return new ObjectParserConfig(setup as LambdaExpr, line as LambdaExpr, complete as LambdaExpr, null);
+                }
+                else
+                {
+                    throw new ParsingException(
+                        "Expected function or object after 'parse with'",
+                        Peek().Line,
+                        Peek().Column
+                    );
+                }
+            }
+            else if (Match(TokenType.AS))
+            {
+                // Format shortcut: parse as json|csv
+                var format = Consume(TokenType.IDENTIFIER, "Expected format identifier after 'as'").Lexeme;
+                if (format != "json" && format != "csv")
+                {
+                    throw new ParsingException(
+                        $"Unsupported format '{format}'. Expected 'json' or 'csv'",
+                        Previous().Line,
+                        Previous().Column
+                    );
+                }
+
+                return new FormatParserConfig(format);
+            }
+            else
+            {
+                throw new ParsingException(
+                    "Expected 'with' or 'as' after 'parse'",
+                    Peek().Line,
+                    Peek().Column
+                );
+            }
+        }
+
 
         private bool NextIsArrowAfterParams()
         {

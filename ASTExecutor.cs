@@ -643,7 +643,7 @@ namespace Shelltrac
 
                 case "sh":
                     string command = val?.ToString() ?? "";
-                    ExecuteShellCommand(command, inv.Line, inv.Column);
+                    ExecuteShellCommand(command, null, inv.Line, inv.Column);
                     break;
             }
         }
@@ -975,7 +975,7 @@ namespace Shelltrac
                             command = cmdObj?.ToString() ?? "";
                         }
 
-                        return ExecuteShellCommand(command, expr.Line, expr.Column);
+                        return ExecuteShellCommand(command, shellCall.Parser, expr.Line, expr.Column);
                 }
 
                 return null;
@@ -1290,13 +1290,55 @@ namespace Shelltrac
 
             public override string ToString() => Stdout.ToString();
         }
+        /*
+                private ShellResult ExecuteShellCommand(string command, ParserConfig parser, int line, int column)
+                {
+                    try
+                    {
+                        // For complex commands, we'll pass them directly to bash without wrapping in quotes
+                        // and let ProcessStartInfo handle the argument escaping
+                        var psi = new ProcessStartInfo("bash")
+                        {
+                            Arguments = $"-c \"{EscapeForBashDoubleQuotes(command)}\"",
+                            RedirectStandardOutput = true,
+                            RedirectStandardError = true,
+                            UseShellExecute = false,
+                            CreateNoWindow = true,
+                        };
 
-        private ShellResult ExecuteShellCommand(string command, int line, int column)
+                        //Console.WriteLine($"executing bash with: {psi.Arguments}");
+                        var sw = Stopwatch.StartNew();
+                        using var proc = Process.Start(psi)!;
+                        int pid = proc.Id;
+                        proc.WaitForExit();
+                        sw.Stop();
+                        string stdout = proc.StandardOutput.ReadToEnd().TrimEnd();
+                        string stderr = proc.StandardError.ReadToEnd().TrimEnd();
+                        int exitCode = proc.ExitCode;
+                        long duration = sw.ElapsedMilliseconds;
+                        if (exitCode != 0 && !string.IsNullOrEmpty(stderr))
+                        {
+                            // Non-zero exit code with error output is a warning, not an error
+                            Console.WriteLine(
+                                $"[SHELL WARNING] Command exited with code {exitCode}: {stderr}"
+                            );
+                        }
+                        // Return multiple values
+                        return new ShellResult(stdout, stderr, exitCode, duration, pid);
+                    }
+                    catch (Exception e)
+                    {
+                        string context = _context.GetContextFragment(line);
+                        throw new ShellCommandException(e.Message, command, null, line, column, context, e);
+                    }
+                }*/
+
+
+        private object? ExecuteShellCommand(string command, ParserConfig parser, int line, int column)
         {
             try
             {
-                // For complex commands, we'll pass them directly to bash without wrapping in quotes
-                // and let ProcessStartInfo handle the argument escaping
+                // Set up the process
                 var psi = new ProcessStartInfo("bash")
                 {
                     Arguments = $"-c \"{EscapeForBashDoubleQuotes(command)}\"",
@@ -1306,31 +1348,207 @@ namespace Shelltrac
                     CreateNoWindow = true,
                 };
 
-                //Console.WriteLine($"executing bash with: {psi.Arguments}");
                 var sw = Stopwatch.StartNew();
                 using var proc = Process.Start(psi)!;
                 int pid = proc.Id;
+
+                // Process the output incrementally based on the parser type
+                object? result = null;
+
+                if (parser is FormatParserConfig formatParser)
+                {
+                    // Format parsers need the entire output, so we'll collect it
+                    string stdout = proc.StandardOutput.ReadToEnd();
+                    result = HandleFormatParser(stdout, formatParser);
+                }
+                else if (parser is FunctionParserConfig funcParser)
+                {
+                    // Process line by line as they become available
+                    result = HandleFunctionParserIncremental(proc.StandardOutput, funcParser);
+                }
+                else if (parser is ObjectParserConfig objParser)
+                {
+                    // Process with accumulator
+                    result = HandleObjectParserIncremental(proc.StandardOutput, objParser);
+                }
+
+                // Wait for the process to exit
                 proc.WaitForExit();
                 sw.Stop();
-                string stdout = proc.StandardOutput.ReadToEnd().TrimEnd();
+
                 string stderr = proc.StandardError.ReadToEnd().TrimEnd();
                 int exitCode = proc.ExitCode;
                 long duration = sw.ElapsedMilliseconds;
+
                 if (exitCode != 0 && !string.IsNullOrEmpty(stderr))
                 {
                     // Non-zero exit code with error output is a warning, not an error
-                    Console.WriteLine(
-                        $"[SHELL WARNING] Command exited with code {exitCode}: {stderr}"
-                    );
+                    Console.WriteLine($"[SHELL WARNING] Command exited with code {exitCode}: {stderr}");
                 }
-                // Return multiple values
-                return new ShellResult(stdout, stderr, exitCode, duration, pid);
+
+                if (result == null)
+                {
+                    string stdout = proc.StandardOutput.ReadToEnd().TrimEnd();
+                    result = new ShellResult(stdout, stderr, exitCode, duration, pid);
+                }
+
+                return result;
             }
             catch (Exception e)
             {
                 string context = _context.GetContextFragment(line);
                 throw new ShellCommandException(e.Message, command, null, line, column, context, e);
             }
+        }
+
+        private object? HandleFormatParser(string output, FormatParserConfig parser)
+        {
+            switch (parser.Format.ToLowerInvariant())
+            {
+                case "json":
+                    return output.ParseJson();
+
+                case "csv":
+                    // Simple CSV parsing logic
+                    var lines = output.Split('\n').Where(line => !string.IsNullOrWhiteSpace(line)).ToList();
+                    if (lines.Count == 0) return new List<Dictionary<string, string>>();
+
+                    var headers = lines[0].Split(',').Select(h => h.Trim()).ToList();
+                    var results = new List<Dictionary<string, string>>();
+
+                    for (int i = 1; i < lines.Count; i++)
+                    {
+                        var values = lines[i].Split(',').Select(v => v.Trim()).ToList();
+                        var row = new Dictionary<string, string>();
+
+                        for (int j = 0; j < Math.Min(headers.Count, values.Count); j++)
+                        {
+                            row[headers[j]] = values[j];
+                        }
+
+                        results.Add(row);
+                    }
+
+                    return results;
+
+                default:
+                    throw new RuntimeException(
+                        $"Unsupported format: {parser.Format}",
+                        _context.CurrentLocation.Line,
+                        _context.CurrentLocation.Column
+                    );
+            }
+        }
+
+        private string HandleFunctionParserIncremental(StreamReader output, FunctionParserConfig parser)
+        {
+            string result = "";
+            // Process output line by line as they become available
+            string? line;
+            while ((line = output.ReadLine()) != null)
+            {
+                // Call the line processor function for each line
+                _context.PushScope();
+                try
+                {
+                    _context.CurrentScope.Variables[parser.LineProcessor.Parameters[0]] = line;
+                    result += EvaluateBlockExpression(parser.LineProcessor.Body);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error processing line: {ex.Message}");
+                }
+                finally
+                {
+                    _context.PopScope();
+                }
+            }
+
+            return result;
+        }
+
+        private object? HandleObjectParserIncremental(StreamReader output, ObjectParserConfig parser)
+        {
+            // Call the setup function to get initial accumulator
+            _context.PushScope();
+            object? accumulator;
+
+            try
+            {
+                // Setup: fn() { return initialValue; }
+                accumulator = EvaluateBlockExpression(parser.Setup.Body);
+            }
+            finally
+            {
+                _context.PopScope();
+            }
+
+            // Process each line with the line processor as they become available
+            string? line;
+            bool continueProcessing = true;
+
+            while (continueProcessing && (line = output.ReadLine()) != null)
+            {
+                _context.PushScope();
+                try
+                {
+                    // Set up parameters for line processor: fn(line, acc) { ... }
+                    _context.CurrentScope.Variables[parser.LineProcessor.Parameters[0]] = line;
+                    _context.CurrentScope.Variables[parser.LineProcessor.Parameters[1]] = accumulator;
+
+                    // Execute the line processor and update accumulator
+                    accumulator = EvaluateBlockExpression(parser.LineProcessor.Body);
+                }
+                catch (Exception ex)
+                {
+                    // If there's an error handler, call it
+                    if (parser.ErrorHandler != null)
+                    {
+                        _context.PushScope();
+                        try
+                        {
+                            _context.CurrentScope.Variables[parser.ErrorHandler.Parameters[0]] = ex;
+                            _context.CurrentScope.Variables[parser.ErrorHandler.Parameters[1]] = line;
+
+                            // If error handler returns false, abort processing
+                            var shouldContinue = EvaluateBlockExpression(parser.ErrorHandler.Body);
+                            if (shouldContinue is bool b && !b)
+                            {
+                                continueProcessing = false;
+                            }
+                        }
+                        finally
+                        {
+                            _context.PopScope();
+                        }
+                    }
+                    else
+                    {
+                        Console.WriteLine($"Error processing line: {ex.Message}");
+                    }
+                }
+                finally
+                {
+                    _context.PopScope();
+                }
+            }
+
+            // Call the complete function if provided
+            if (parser.Complete != null)
+            {
+                _context.PushScope();
+                try
+                {
+                    _context.CurrentScope.Variables[parser.Complete.Parameters[0]] = accumulator;
+                    accumulator = EvaluateBlockExpression(parser.Complete.Body);
+                }
+                finally
+                {
+                    _context.PopScope();
+                }
+            }
+
+            return accumulator;
         }
 
         public class SshResult
