@@ -902,15 +902,29 @@ namespace Shelltrac
                     return new FunctionParserConfig(ParseLambdaExpr() as LambdaExpr);
                 }
                 // Object parser: { setup: fn() {...}, line: fn() {...}, ... }
-                else if (Check(TokenType.LBRACE))
+                else if (Match(TokenType.LBRACE))
                 {
                     var dict = ParseDictionary() as DictExpr;
                     var setup = dict.ExtractStringKey("setup");
                     var line = dict.ExtractStringKey("line");
                     var complete = dict.ExtractStringKey("complete");
-                    // TODO: wow dict.Pairs is a List<Expr, Expr>, do we want objects to be able to be keys because those need to get evalled sometimes
+                    var error = dict.ExtractStringKey("error");
 
-                    return new ObjectParserConfig(setup as LambdaExpr, line as LambdaExpr, complete as LambdaExpr, null);
+                    if (setup == null || line == null)
+                    {
+                        throw new ParsingException(
+                            "Parser object must have 'setup' and 'line' properties",
+                            Previous().Line,
+                            Previous().Column
+                        );
+                    }
+
+                    return new ObjectParserConfig(
+                        setup as LambdaExpr,
+                        line as LambdaExpr,
+                        complete as LambdaExpr,
+                        error as LambdaExpr
+                    );
                 }
                 else
                 {

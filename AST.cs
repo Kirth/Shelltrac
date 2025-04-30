@@ -480,16 +480,13 @@ namespace Shelltrac
 
         public Expr? ExtractStringKey(string key)
         {
-
             foreach (var kv in Pairs)
             {
-                if (kv.Key is String)
+                if (kv.Key is LiteralExpr litExpr && litExpr.Value is string strValue && strValue == key)
                 {
-
-                    Console.WriteLine($"extractstringkey {key} {kv}");
+                    return kv.Value;
                 }
             }
-
             return null;
         }
     }
