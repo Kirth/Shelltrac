@@ -1476,7 +1476,15 @@ namespace Shelltrac
             try
             {
                 // Setup: fn() { return initialValue; }
-                accumulator = EvaluateBlockExpression(parser.Setup.Body);
+                try
+                {
+                    accumulator = EvaluateBlockExpression(parser.Setup.Body);
+                }
+                catch (ReturnException re)
+                {
+                    // Handle explicit return from setup
+                    accumulator = re.Values.Count > 0 ? re.Values[0] : null;
+                }
             }
             finally
             {
@@ -1497,11 +1505,34 @@ namespace Shelltrac
                     _context.CurrentScope.Variables[parser.LineProcessor.Parameters[1]] = accumulator;
 
                     // Execute the line processor and update accumulator
-                    accumulator = EvaluateBlockExpression(parser.LineProcessor.Body);
+                    try
+                    {
+                        var result = EvaluateBlockExpression(parser.LineProcessor.Body);
+                        // A key issue - we need to get the latest value of the accumulator
+                        // from the current scope, not just the function return value
+                        var updatedAccumulator = _context.CurrentScope.Variables[parser.LineProcessor.Parameters[1]];
+                        if (updatedAccumulator != null)
+                        {
+                            accumulator = updatedAccumulator;
+                        }
+                        // If there's also an explicit return value, use that instead
+                        if (result != null)
+                        {
+                            accumulator = result;
+                        }
+                    }
+                    catch (ReturnException re)
+                    {
+                        // Handle explicit return
+                        if (re.Values.Count > 0)
+                        {
+                            accumulator = re.Values[0];
+                        }
+                    }
                 }
                 catch (Exception ex)
                 {
-                    // If there's an error handler, call it
+                    // Error handling code remains unchanged
                     if (parser.ErrorHandler != null)
                     {
                         _context.PushScope();
@@ -1511,8 +1542,24 @@ namespace Shelltrac
                             _context.CurrentScope.Variables[parser.ErrorHandler.Parameters[1]] = line;
 
                             // If error handler returns false, abort processing
-                            var shouldContinue = EvaluateBlockExpression(parser.ErrorHandler.Body);
-                            if (shouldContinue is bool b && !b)
+                            bool shouldContinue = true;
+                            try
+                            {
+                                var result = EvaluateBlockExpression(parser.ErrorHandler.Body);
+                                if (result is bool b)
+                                {
+                                    shouldContinue = b;
+                                }
+                            }
+                            catch (ReturnException re)
+                            {
+                                if (re.Values.Count > 0 && re.Values[0] is bool b)
+                                {
+                                    shouldContinue = b;
+                                }
+                            }
+
+                            if (!shouldContinue)
                             {
                                 continueProcessing = false;
                             }
@@ -1540,7 +1587,21 @@ namespace Shelltrac
                 try
                 {
                     _context.CurrentScope.Variables[parser.Complete.Parameters[0]] = accumulator;
-                    accumulator = EvaluateBlockExpression(parser.Complete.Body);
+                    try
+                    {
+                        var result = EvaluateBlockExpression(parser.Complete.Body);
+                        if (result != null)
+                        {
+                            accumulator = result;
+                        }
+                    }
+                    catch (ReturnException re)
+                    {
+                        if (re.Values.Count > 0)
+                        {
+                            accumulator = re.Values[0];
+                        }
+                    }
                 }
                 finally
                 {
