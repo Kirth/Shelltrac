@@ -857,7 +857,14 @@ namespace Shelltrac
                     arg = ParseShellBlock();
                 else
                     arg = ParseExpression(); // expects a literal string like "ls -ltrha"
-                return new SshExpr(host, arg);
+
+                ParserConfig parseConfig = null;
+                if (Match(TokenType.PARSE))
+                {
+                    parseConfig = ParseShellParseConfig(arg);
+                }
+
+                return new SshExpr(host, arg, parseConfig);
             }
             if (Match(TokenType.LBRACE))
             {

@@ -7,19 +7,10 @@ namespace Shelltrac
     /// </summary>
     public class ShelltracException : Exception
     {
-        /// <summary>
-        /// Line number where the error occurred
-        /// </summary>
         public int Line { get; }
 
-        /// <summary>
-        /// Column number where the error occurred
-        /// </summary>
         public int Column { get; }
 
-        /// <summary>
-        /// The script fragment where the error occurred (for context)
-        /// </summary>
         public string ScriptFragment { get; }
 
         public ShelltracException(
@@ -44,9 +35,6 @@ namespace Shelltrac
         }
     }
 
-    /// <summary>
-    /// Exception thrown during parsing of Shelltrac scripts
-    /// </summary>
     public class ParsingException : ShelltracException
     {
         public ParsingException(
@@ -59,9 +47,6 @@ namespace Shelltrac
             : base($"Parsing error: {message}", line, column, scriptFragment, innerException) { }
     }
 
-    /// <summary>
-    /// Exception thrown during execution of Shelltrac scripts
-    /// </summary>
     public class RuntimeException : ShelltracException
     {
         public RuntimeException(
@@ -74,9 +59,6 @@ namespace Shelltrac
             : base($"Runtime error: {message}", line, column, scriptFragment, innerException) { }
     }
 
-    /// <summary>
-    /// Exception thrown when a shell command fails
-    /// </summary>
     public class ShellCommandException : RuntimeException
     {
         public string Command { get; }
@@ -104,9 +86,6 @@ namespace Shelltrac
         }
     }
 
-    /// <summary>
-    /// Exception thrown when an SSH command fails
-    /// </summary>
     public class SshCommandException : ShellCommandException
     {
         public string Host { get; }

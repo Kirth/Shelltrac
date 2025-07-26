@@ -382,13 +382,13 @@ namespace Shelltrac
 
     public class ObjectParserConfig : ParserConfig
     {
-        public LambdaExpr Setup { get; }
+        public LambdaExpr? Setup { get; }
         public LambdaExpr LineProcessor { get; }
         public LambdaExpr? Complete { get; }
         public LambdaExpr? ErrorHandler { get; }
 
         public ObjectParserConfig(
-            LambdaExpr setup,
+            LambdaExpr? setup,
             LambdaExpr lineProcessor,
             LambdaExpr? complete = null,
             LambdaExpr? errorHandler = null)
@@ -415,11 +415,13 @@ namespace Shelltrac
     {
         public Expr Host { get; }
         public Expr Command { get; }
+        public ParserConfig Parser { get; }
 
-        public SshExpr(Expr host, Expr command)
+        public SshExpr(Expr host, Expr command, ParserConfig parser = null)
         {
             Host = host;
             Command = command;
+            Parser = parser;
         }
     }
 

@@ -49,7 +49,7 @@ namespace Shelltrac
             return obj.ToString()!;
         }
 
-        public static string ExecuteSsh(string host, string command)
+        public static System.Diagnostics.Process ExecuteSshProc(string host, string command)
         {
             try
             {
@@ -65,13 +65,14 @@ namespace Shelltrac
 
                 //Console.WriteLine("Executing SSH");
                 //Console.WriteLine(command);
-                using var proc = Process.Start(psi);
+                return Process.Start(psi);
+                /*
                 proc.WaitForExit();
                 string output = proc.StandardOutput.ReadToEnd();
                 string err = proc.StandardError.ReadToEnd();
                 if (!string.IsNullOrWhiteSpace(err))
                     output += "\n[SSH ERROR] " + err;
-                return output;
+                return output; */
             }
             catch (Exception e)
             {

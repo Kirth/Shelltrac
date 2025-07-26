@@ -223,6 +223,43 @@ namespace Shelltrac
             _sourceCode = sourceCode;
             _context = new ExecutionContext(scriptPath, sourceCode);
 
+            _context.GlobalScope.Variables["read_file"] = new BuiltinFunction(
+                "read_file",
+                (exec, args) =>
+                {
+                    if (args.Count != 1)
+                        throw new RuntimeException(
+                            "read_file() expects exactly one argument (file path).",
+                            _context.CurrentLocation.Line,
+                            _context.CurrentLocation.Column
+                        );
+
+                    string filePath = args[0]?.ToString() ?? "";
+
+                    try
+                    {
+                        if (!File.Exists(filePath))
+                            throw new RuntimeException(
+                                $"File not found: {filePath}",
+                                _context.CurrentLocation.Line,
+                                _context.CurrentLocation.Column
+                            );
+
+                        return File.ReadAllText(filePath);
+                    }
+                    catch (Exception ex) when (!(ex is RuntimeException))
+                    {
+                        throw new RuntimeException(
+                            $"Error reading file: {ex.Message}",
+                            _context.CurrentLocation.Line,
+                            _context.CurrentLocation.Column,
+                            _context.GetContextFragment(_context.CurrentLocation.Line),
+                            ex
+                        );
+                    }
+                }
+            );
+
             // Register built-in functions in the global scope
             _context.GlobalScope.Variables["wait"] = new BuiltinFunction(
                 "wait",
@@ -1635,23 +1672,47 @@ namespace Shelltrac
             public override string ToString() => Stdout.ToString();
         }
 
-        private SshResult ExecuteSshCommand(SshExpr sshExpr)
+        private object ExecuteSshCommand(SshExpr sshExpr)
         {
             object hostObj = Eval(sshExpr.Host)!;
             object sshCmdObj = Eval(sshExpr.Command)!;
             string host = hostObj?.ToString() ?? "";
             string sshCommand = EscapeForBashDoubleQuotes(sshCmdObj?.ToString() ?? "");
 
+
             try
             {
                 var sw = Stopwatch.StartNew();
-                string output = Helper.ExecuteSsh(host, sshCommand);
+                var proc = Helper.ExecuteSshProc(host, sshCommand);
+                // TODO: we changed executessh to executesshproc to return the proc
+                // :w
+
+                object? result = null;
+
+                if (sshExpr.Parser is FormatParserConfig formatParser)
+                {
+                    // Format parsers need the entire output, so we'll collect it
+                    string stdout = proc.StandardOutput.ReadToEnd();
+                    result = HandleFormatParser(stdout, formatParser);
+                }
+                else if (sshExpr.Parser is FunctionParserConfig funcParser)
+                {
+                    // Process line by line as they become available
+                    result = HandleFunctionParserIncremental(proc.StandardOutput, funcParser);
+                }
+                else if (sshExpr.Parser is ObjectParserConfig objParser)
+                {
+                    // Process with accumulator
+                    result = HandleObjectParserIncremental(proc.StandardOutput, objParser);
+                }
+
                 sw.Stop();
 
                 // Parse output and errors
                 string stderr = "";
                 int exitCode = 0;
 
+                /* TODO error handling??
                 // Check for error message
                 int errorIndex = output.IndexOf("\n[SSH ERROR] ");
                 if (errorIndex >= 0)
@@ -1660,10 +1721,19 @@ namespace Shelltrac
                     output = output.Substring(0, errorIndex);
                     exitCode = 1;
                 }
+                */
 
                 long duration = sw.ElapsedMilliseconds;
 
-                return new SshResult(output, stderr, exitCode, duration);
+
+                if (result == null)
+                {
+                    string stdout = proc.StandardOutput.ReadToEnd().TrimEnd();
+                    result = new SshResult(stdout, stderr, exitCode, duration);
+                }
+
+                return result;
+
             }
             catch (Exception e)
             {
