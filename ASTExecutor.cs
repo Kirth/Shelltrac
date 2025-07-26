@@ -203,7 +203,7 @@ namespace Shelltrac
         }
     }
 
-    public class Executor
+    public class Executor : IStmtVisitor, IExprVisitor<object?>
     {
         private readonly Dictionary<string, List<EventHandler>> _eventHandlers = new();
         private readonly ExecutionContext _context;
@@ -458,93 +458,8 @@ namespace Shelltrac
                 // Track statement location for error reporting
                 _context.PushLocation(stmt);
 
-                switch (stmt)
-                {
-                    case TaskStmt:
-                    case EventStmt:
-                        // No-op here, handled in Execute
-                        break;
-
-                    case TriggerStmt trigger:
-                        HandleTrigger(trigger);
-                        break;
-
-                    case InvocationStmt inv:
-                        HandleInvocation(inv);
-                        break;
-
-                    case VarDeclStmt vd:
-                        // Always put in current scope
-                        object val = Eval(vd.Initializer)!;
-                        /* TODO: do we want to pull out the string result?
-                         * atm we provide a ShellResult which' ToString-method
-                         * exposes stdout by default
-                         *
-                        if (val is ShellResult)
-                        {
-                            val = (val as ShellResult).Stdout;
-                        } */
-                        _context.CurrentScope.Variables[vd.VarName] = val;
-                        break;
-
-                    case AssignStmt assignStmt:
-                        object rhsVal = Eval(assignStmt.ValueExpr)!;
-                        if (!_context.AssignVariable(assignStmt.VarName, rhsVal))
-                        {
-                            throw new RuntimeException(
-                                $"Variable '{assignStmt.VarName}' not found.",
-                                stmt.Line,
-                                stmt.Column,
-                                _context.GetContextFragment(stmt.Line)
-                            );
-                        }
-                        break;
-
-                    case IndexAssignStmt indexAssign:
-                        HandleIndexAssign(indexAssign);
-                        break;
-
-                    case IfStmt ifs:
-                        HandleIf(ifs);
-                        break;
-
-                    case ForStmt fs:
-                        HandleFor(fs);
-                        break;
-
-                    case FunctionStmt func:
-                        // Store function in the current scope
-                        _context.CurrentScope.Variables[func.Name] = new Function(
-                            func,
-                            new Dictionary<string, object?>(_context.CurrentScope.Variables)
-                        );
-                        break;
-
-                    case ReturnStmt ret:
-                        List<object?> returnValues = new List<object?>();
-                        foreach (var valueExpr in ret.Values)
-                        {
-                            returnValues.Add(Eval(valueExpr));
-                        }
-                        throw new ReturnException(returnValues);
-
-                    case DestructuringAssignStmt destructAssign:
-                        HandleDestructuringAssign(destructAssign);
-                        break;
-
-                    case LoopYieldStmt yield:
-                        object? yieldValue = yield.Value != null ? Eval(yield.Value) : null;
-                        throw new YieldException(
-                            yieldValue,
-                            yield.IsEmit,
-                            yield.IsGlobalCancel,
-                            yield.IsOverride
-                        );
-
-                    case ExpressionStmt expr:
-                        Eval(expr.Expression);
-                        break;
-                }
+                // Use visitor pattern to dispatch statement execution
+                stmt.Accept(this);
             }
             catch (ShelltracException)
             {
@@ -816,6 +731,106 @@ namespace Shelltrac
 
         #endregion
 
+        #region Statement Visitor Methods
+
+        public void Visit(ExpressionStmt stmt)
+        {
+            Eval(stmt.Expression);
+        }
+
+        public void Visit(TaskStmt stmt)
+        {
+            // No-op here, handled in Execute method
+        }
+
+        public void Visit(EventStmt stmt)
+        {
+            // No-op here, handled in Execute method
+        }
+
+        public void Visit(FunctionStmt stmt)
+        {
+            // Store function in the current scope
+            _context.CurrentScope.Variables[stmt.Name] = new Function(
+                stmt,
+                new Dictionary<string, object?>(_context.CurrentScope.Variables)
+            );
+        }
+
+        public void Visit(ReturnStmt stmt)
+        {
+            List<object?> returnValues = new List<object?>();
+            foreach (var valueExpr in stmt.Values)
+            {
+                returnValues.Add(Eval(valueExpr));
+            }
+            throw new ReturnException(returnValues);
+        }
+
+        public void Visit(TriggerStmt stmt)
+        {
+            HandleTrigger(stmt);
+        }
+
+        public void Visit(DestructuringAssignStmt stmt)
+        {
+            HandleDestructuringAssign(stmt);
+        }
+
+        public void Visit(InvocationStmt stmt)
+        {
+            HandleInvocation(stmt);
+        }
+
+        public void Visit(VarDeclStmt stmt)
+        {
+            // Always put in current scope
+            object val = Eval(stmt.Initializer)!;
+            _context.CurrentScope.Variables[stmt.VarName] = val;
+        }
+
+        public void Visit(AssignStmt stmt)
+        {
+            object rhsVal = Eval(stmt.ValueExpr)!;
+            if (!_context.AssignVariable(stmt.VarName, rhsVal))
+            {
+                throw new RuntimeException(
+                    $"Variable '{stmt.VarName}' not found.",
+                    stmt.Line,
+                    stmt.Column,
+                    _context.GetContextFragment(stmt.Line)
+                );
+            }
+        }
+
+        public void Visit(IndexAssignStmt stmt)
+        {
+            HandleIndexAssign(stmt);
+        }
+
+        public void Visit(IfStmt stmt)
+        {
+            HandleIf(stmt);
+        }
+
+        public void Visit(ForStmt stmt)
+        {
+            HandleFor(stmt);
+        }
+
+        public void Visit(LoopYieldStmt stmt)
+        {
+            object? yieldValue = stmt.Value != null ? Eval(stmt.Value) : null;
+            throw new YieldException(
+                yieldValue,
+                stmt.IsEmit,
+                stmt.IsGlobalCancel,
+                stmt.IsOverride
+            );
+        }
+
+        #endregion
+
         #region Expression Evaluation
 
         /// <summary>
@@ -828,194 +843,8 @@ namespace Shelltrac
                 // Track expression location for error reporting
                 _context.PushLocation(expr);
 
-                if (expr is LambdaExpr lambda)
-                {
-                    // capture current variables
-                    var closure = _context.GetAllVariables();
-
-                    var lambdaDecl = new FunctionStmt("<lambda>", lambda.Parameters, lambda.Body)
-                    {
-                        Line = expr.Line,
-                        Column = expr.Column,
-                    };
-
-                    return new Function(lambdaDecl, closure);
-                }
-
-                switch (expr)
-                {
-                    case LiteralExpr lit:
-                        return lit.Value;
-
-                    case InterpolatedStringExpr interp:
-                        {
-                            var sb = new StringBuilder();
-                            foreach (var part in interp.Parts)
-                            {
-                                object? value = Eval(part);
-                                sb.Append(value?.ToString() ?? "");
-                            }
-                            return sb.ToString();
-                        }
-
-                    case VarExpr v:
-                        return _context.LookupVariable(v.Name);
-
-                    case BinaryExpr bin:
-                        return EvalBinary(bin);
-
-                    case CallExpr call:
-                        object? callee = Eval(call.Callee);
-                        if (callee is Callable callable)
-                        {
-                            List<object?> args = new();
-                            foreach (var arg in call.Arguments)
-                                args.Add(Eval(arg));
-                            return callable.Call(this, args);
-                        }
-                        throw new RuntimeException(
-                            $"Attempted to call a non-function '{callee}'",
-                            expr.Line,
-                            expr.Column
-                        );
-
-                    case MemberAccessExpr memberExpr:
-                        object parent = Eval(memberExpr.Object)!;
-                        return BindMember(parent, memberExpr.MemberName);
-
-                    case ArrayExpr arr:
-                        var list = new List<object?>();
-                        foreach (var element in arr.Elements)
-                            list.Add(Eval(element));
-                        return list;
-
-                    case IfExpr ifExpr:
-                        {
-                            var condVal = Eval(ifExpr.Condition)!;
-                            bool condition = ConvertToBool(condVal);
-                            if (condition)
-                                return EvaluateBlockExpression(ifExpr.ThenBlock);
-                            else if (ifExpr.ElseBlock != null)
-                                return EvaluateBlockExpression(ifExpr.ElseBlock);
-                            else
-                                return null;
-                        }
-
-                    case ForExpr forExpr:
-                        {
-                            var iterable = Eval(forExpr.Iterable);
-                            if (!(iterable is IEnumerable en))
-                                throw new RuntimeException(
-                                    "For expression must iterate over an enumerable",
-                                    forExpr.Line,
-                                    forExpr.Column
-                                );
-
-                            var results = new List<object?>();
-                            foreach (object item in en)
-                            {
-                                _context.PushScope();
-                                _context.CurrentScope.Variables[forExpr.IteratorVar] = item;
-
-                                try
-                                {
-                                    var value = EvaluateBlockExpression(forExpr.Body);
-                                    results.Add(value);
-                                }
-                                finally
-                                {
-                                    _context.PopScope();
-                                }
-                            }
-                            return results;
-                        }
-
-                    case ParallelForExpr pf:
-                        return EvalParallelFor(pf);
-
-                    case DictExpr dict:
-                        var map = new Dictionary<string, object?>();
-                        foreach (var (keyExpr, valueExpr) in dict.Pairs)
-                        {
-                            var keyObj = Eval(keyExpr);
-                            if (keyObj == null)
-                                throw new RuntimeException(
-                                    "Dictionary key cannot be null",
-                                    expr.Line,
-                                    expr.Column
-                                );
-
-                            string key = keyObj.ToString()!;
-                            map[key] = Eval(valueExpr);
-                        }
-                        return map;
-
-                    case IndexExpr indexExpr:
-                        object target = Eval(indexExpr.Target)!;
-                        object indexValue = Eval(indexExpr.Index)!;
-
-                        if (target is IList<object> tlist)
-                        {
-                            int i = ConvertToInt(indexValue);
-                            if (i < 0 || i >= tlist.Count)
-                                throw new RuntimeException(
-                                    $"Index {i} is out of range for list of length {tlist.Count}",
-                                    indexExpr.Line,
-                                    indexExpr.Column
-                                );
-                            return tlist[i];
-                        }
-                        else if (target is IDictionary<string, object> tdict)
-                        {
-                            string key = indexValue?.ToString() ?? "";
-                            if (!tdict.ContainsKey(key))
-                                throw new RuntimeException(
-                                    $"Key '{key}' not found in dictionary",
-                                    indexExpr.Line,
-                                    indexExpr.Column
-                                );
-                            return tdict[key];
-                        }
-                        else
-                        {
-                            throw new RuntimeException(
-                                $"Type {target?.GetType().Name ?? "null"} does not support indexing",
-                                indexExpr.Line,
-                                indexExpr.Column
-                            );
-                        }
-
-                    case RangeExpr rangeExpr:
-                        {
-                            object leftVal = Eval(rangeExpr.Start)!;
-                            object rightVal = Eval(rangeExpr.End)!;
-                            int start = ConvertToInt(leftVal)!;
-                            int end = ConvertToInt(rightVal)!;
-                            return new Range(start, end);
-                        }
-
-                    case SshExpr sshExpr:
-                        return ExecuteSshCommand(sshExpr);
-
-                    case ShellExpr shellCall:
-                        object cmdObj = Eval(shellCall.Argument)!;
-                        string command;
-
-                        // If it's already a string, use it directly
-                        if (cmdObj is string cmdStr)
-                        {
-                            command = cmdStr;
-                        }
-                        else
-                        {
-                            // Otherwise convert to string
-                            command = cmdObj?.ToString() ?? "";
-                        }
-
-                        return ExecuteShellCommand(command, shellCall.Parser, expr.Line, expr.Column);
-                }
-
-                return null;
+                // Use visitor pattern to dispatch expression evaluation
+                return expr.Accept(this);
             }
             catch (ShelltracException)
             {
@@ -1978,6 +1807,216 @@ namespace Shelltrac
                 return !string.IsNullOrEmpty(s);
 
             return val != null;
+        }
+
+        #endregion
+
+        #region Expression Visitor Methods
+
+        public object? Visit(LiteralExpr expr)
+        {
+            return expr.Value;
+        }
+
+        public object? Visit(InterpolatedStringExpr expr)
+        {
+            var sb = new StringBuilder();
+            foreach (var part in expr.Parts)
+            {
+                object? value = Eval(part);
+                sb.Append(value?.ToString() ?? "");
+            }
+            return sb.ToString();
+        }
+
+        public object? Visit(VarExpr expr)
+        {
+            return _context.LookupVariable(expr.Name);
+        }
+
+        public object? Visit(CallExpr expr)
+        {
+            object? callee = Eval(expr.Callee);
+            if (callee is Callable callable)
+            {
+                List<object?> args = new();
+                foreach (var arg in expr.Arguments)
+                    args.Add(Eval(arg));
+                return callable.Call(this, args);
+            }
+            throw new RuntimeException(
+                $"Attempted to call a non-function '{callee}'",
+                expr.Line,
+                expr.Column
+            );
+        }
+
+        public object? Visit(BinaryExpr expr)
+        {
+            return EvalBinary(expr);
+        }
+
+        public object? Visit(IfExpr expr)
+        {
+            var condVal = Eval(expr.Condition)!;
+            bool condition = ConvertToBool(condVal);
+            if (condition)
+                return EvaluateBlockExpression(expr.ThenBlock);
+            else if (expr.ElseBlock != null)
+                return EvaluateBlockExpression(expr.ElseBlock);
+            else
+                return null;
+        }
+
+        public object? Visit(ForExpr expr)
+        {
+            var iterable = Eval(expr.Iterable);
+            if (!(iterable is IEnumerable en))
+                throw new RuntimeException(
+                    "For expression must iterate over an enumerable",
+                    expr.Line,
+                    expr.Column
+                );
+
+            var results = new List<object?>();
+            foreach (object item in en)
+            {
+                _context.PushScope();
+                _context.CurrentScope.Variables[expr.IteratorVar] = item;
+
+                try
+                {
+                    var value = EvaluateBlockExpression(expr.Body);
+                    results.Add(value);
+                }
+                finally
+                {
+                    _context.PopScope();
+                }
+            }
+            return results;
+        }
+
+        public object? Visit(ParallelForExpr expr)
+        {
+            return EvalParallelFor(expr);
+        }
+
+        public object? Visit(LambdaExpr expr)
+        {
+            // capture current variables
+            var closure = _context.GetAllVariables();
+
+            var lambdaDecl = new FunctionStmt("<lambda>", expr.Parameters, expr.Body)
+            {
+                Line = expr.Line,
+                Column = expr.Column,
+            };
+
+            return new Function(lambdaDecl, closure);
+        }
+
+        public object? Visit(ShellExpr expr)
+        {
+            object cmdObj = Eval(expr.Argument)!;
+            string command;
+
+            // If it's already a string, use it directly
+            if (cmdObj is string cmdStr)
+            {
+                command = cmdStr;
+            }
+            else
+            {
+                // Otherwise convert to string
+                command = cmdObj?.ToString() ?? "";
+            }
+
+            return ExecuteShellCommand(command, expr.Parser, expr.Line, expr.Column);
+        }
+
+        public object? Visit(SshExpr expr)
+        {
+            return ExecuteSshCommand(expr);
+        }
+
+        public object? Visit(MemberAccessExpr expr)
+        {
+            object parent = Eval(expr.Object)!;
+            return BindMember(parent, expr.MemberName);
+        }
+
+        public object? Visit(RangeExpr expr)
+        {
+            object leftVal = Eval(expr.Start)!;
+            object rightVal = Eval(expr.End)!;
+            int start = ConvertToInt(leftVal)!;
+            int end = ConvertToInt(rightVal)!;
+            return new Range(start, end);
+        }
+
+        public object? Visit(ArrayExpr expr)
+        {
+            var list = new List<object?>();
+            foreach (var element in expr.Elements)
+                list.Add(Eval(element));
+            return list;
+        }
+
+        public object? Visit(IndexExpr expr)
+        {
+            object target = Eval(expr.Target)!;
+            object indexValue = Eval(expr.Index)!;
+
+            if (target is IList<object> tlist)
+            {
+                int i = ConvertToInt(indexValue);
+                if (i < 0 || i >= tlist.Count)
+                    throw new RuntimeException(
+                        $"Index {i} is out of range for list of length {tlist.Count}",
+                        expr.Line,
+                        expr.Column
+                    );
+                return tlist[i];
+            }
+            else if (target is IDictionary<string, object> tdict)
+            {
+                string key = indexValue?.ToString() ?? "";
+                if (!tdict.ContainsKey(key))
+                    throw new RuntimeException(
+                        $"Key '{key}' not found in dictionary",
+                        expr.Line,
+                        expr.Column
+                    );
+                return tdict[key];
+            }
+            else
+            {
+                throw new RuntimeException(
+                    $"Type {target?.GetType().Name ?? "null"} does not support indexing",
+                    expr.Line,
+                    expr.Column
+                );
+            }
+        }
+
+        public object? Visit(DictExpr expr)
+        {
+            var map = new Dictionary<string, object?>();
+            foreach (var (keyExpr, valueExpr) in expr.Pairs)
+            {
+                var keyObj = Eval(keyExpr);
+                if (keyObj == null)
+                    throw new RuntimeException(
+                        "Dictionary key cannot be null",
+                        expr.Line,
+                        expr.Column
+                    );
+
+                string key = keyObj.ToString()!;
+                map[key] = Eval(valueExpr);
+            }
+            return map;
         }
 
         #endregion

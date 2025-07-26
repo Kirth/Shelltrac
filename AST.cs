@@ -45,6 +45,8 @@ namespace Shelltrac
         public int Line { get; set; }
         public int Column { get; set; }
         public int Length { get; set; }
+        
+        public abstract void Accept(IStmtVisitor visitor);
     }
 
     public class ProgramNode
@@ -62,6 +64,8 @@ namespace Shelltrac
         {
             Expression = expression;
         }
+        
+        public override void Accept(IStmtVisitor visitor) => visitor.Visit(this);
     }
 
     public class TaskStmt : Stmt
@@ -78,6 +82,8 @@ namespace Shelltrac
             Body = body;
             Frequency = freq;
         }
+        
+        public override void Accept(IStmtVisitor visitor) => visitor.Visit(this);
     }
 
     public class EventStmt : Stmt
@@ -92,6 +98,8 @@ namespace Shelltrac
             Parameters = parameters;
             Body = body;
         }
+        
+        public override void Accept(IStmtVisitor visitor) => visitor.Visit(this);
     }
 
     public class FunctionStmt : Stmt
@@ -106,6 +114,8 @@ namespace Shelltrac
             Parameters = parameters;
             Body = body;
         }
+        
+        public override void Accept(IStmtVisitor visitor) => visitor.Visit(this);
     }
 
     // represents an inline fn(a,b){ … } expression
@@ -119,6 +129,8 @@ namespace Shelltrac
             Parameters = parameters;
             Body = body;
         }
+        
+        public override T Accept<T>(IExprVisitor<T> visitor) => visitor.Visit(this);
     }
 
     public class ReturnStmt : Stmt
@@ -126,6 +138,8 @@ namespace Shelltrac
         public List<Expr> Values { get; }
 
         public ReturnStmt(List<Expr> values) => Values = values;
+        
+        public override void Accept(IStmtVisitor visitor) => visitor.Visit(this);
     }
 
     public class TriggerStmt : Stmt
@@ -138,6 +152,8 @@ namespace Shelltrac
             EventName = eventName;
             Arguments = arguments;
         }
+        
+        public override void Accept(IStmtVisitor visitor) => visitor.Visit(this);
     }
 
     public class DestructuringAssignStmt : Stmt
@@ -150,6 +166,8 @@ namespace Shelltrac
             VarNames = varNames;
             ValueExpr = valueExpr;
         }
+        
+        public override void Accept(IStmtVisitor visitor) => visitor.Visit(this);
     }
 
     public class InvocationStmt : Stmt
@@ -162,6 +180,8 @@ namespace Shelltrac
             CommandKeyword = keyword;
             Argument = arg;
         }
+        
+        public override void Accept(IStmtVisitor visitor) => visitor.Visit(this);
     }
 
     // ----- New: Variables, if, for, etc. -----
@@ -176,6 +196,8 @@ namespace Shelltrac
             VarName = varName;
             Initializer = init;
         }
+        
+        public override void Accept(IStmtVisitor visitor) => visitor.Visit(this);
     }
 
     public class AssignStmt : Stmt
@@ -188,6 +210,8 @@ namespace Shelltrac
             VarName = varName;
             ValueExpr = valueExpr;
         }
+        
+        public override void Accept(IStmtVisitor visitor) => visitor.Visit(this);
     }
 
     public class IndexAssignStmt : Stmt
@@ -202,6 +226,8 @@ namespace Shelltrac
             Index = index;
             ValueExpr = valueExpr;
         }
+        
+        public override void Accept(IStmtVisitor visitor) => visitor.Visit(this);
     }
 
     public class IfStmt : Stmt
@@ -216,6 +242,8 @@ namespace Shelltrac
             ThenBlock = thenBlock;
             ElseBlock = elseBlock;
         }
+        
+        public override void Accept(IStmtVisitor visitor) => visitor.Visit(this);
     }
 
     public class ForStmt : Stmt
@@ -230,6 +258,8 @@ namespace Shelltrac
             Iterable = iterable;
             Body = body;
         }
+        
+        public override void Accept(IStmtVisitor visitor) => visitor.Visit(this);
     }
 
     // ----- Expressions -----
@@ -239,6 +269,8 @@ namespace Shelltrac
         public int Line { get; set; }
         public int Column { get; set; }
         public int Length { get; set; }
+        
+        public abstract T Accept<T>(IExprVisitor<T> visitor);
     }
 
     public class LiteralExpr : Expr
@@ -246,6 +278,8 @@ namespace Shelltrac
         public object Value { get; }
 
         public LiteralExpr(object value) => Value = value;
+        
+        public override T Accept<T>(IExprVisitor<T> visitor) => visitor.Visit(this);
     }
 
     public class InterpolatedStringExpr : Expr
@@ -256,6 +290,8 @@ namespace Shelltrac
         {
             Parts = parts;
         }
+        
+        public override T Accept<T>(IExprVisitor<T> visitor) => visitor.Visit(this);
     }
 
     public class VarExpr : Expr
@@ -263,6 +299,8 @@ namespace Shelltrac
         public string Name { get; }
 
         public VarExpr(string name) => Name = name;
+        
+        public override T Accept<T>(IExprVisitor<T> visitor) => visitor.Visit(this);
     }
 
     public class CallExpr : Expr
@@ -275,6 +313,8 @@ namespace Shelltrac
             Callee = callee;
             Arguments = arguments;
         }
+        
+        public override T Accept<T>(IExprVisitor<T> visitor) => visitor.Visit(this);
     }
 
     public class BinaryExpr : Expr
@@ -289,6 +329,8 @@ namespace Shelltrac
             Op = op;
             Right = right;
         }
+        
+        public override T Accept<T>(IExprVisitor<T> visitor) => visitor.Visit(this);
     }
 
     public class IfExpr : Expr
@@ -303,6 +345,8 @@ namespace Shelltrac
             ThenBlock = thenBlock;
             ElseBlock = elseBlock;
         }
+        
+        public override T Accept<T>(IExprVisitor<T> visitor) => visitor.Visit(this);
     }
 
     public class ForExpr : Expr
@@ -317,6 +361,8 @@ namespace Shelltrac
             Iterable = iterable;
             Body = body;
         }
+        
+        public override T Accept<T>(IExprVisitor<T> visitor) => visitor.Visit(this);
     }
 
     public class LoopYieldStmt : Stmt
@@ -340,6 +386,8 @@ namespace Shelltrac
             IsGlobalCancel = isGlobalCancel;
             IsOverride = isOverride;
         }
+        
+        public override void Accept(IStmtVisitor visitor) => visitor.Visit(this);
     }
 
     public class ParallelForExpr : Expr
@@ -354,6 +402,8 @@ namespace Shelltrac
             Iterable = iterable;
             Body = body;
         }
+        
+        public override T Accept<T>(IExprVisitor<T> visitor) => visitor.Visit(this);
     }
 
     public class ShellExpr : Expr
@@ -366,6 +416,8 @@ namespace Shelltrac
             Argument = arg;
             Parser = parser;
         }
+        
+        public override T Accept<T>(IExprVisitor<T> visitor) => visitor.Visit(this);
     }
 
     public abstract class ParserConfig { }
@@ -423,6 +475,8 @@ namespace Shelltrac
             Command = command;
             Parser = parser;
         }
+        
+        public override T Accept<T>(IExprVisitor<T> visitor) => visitor.Visit(this);
     }
 
     public class MemberAccessExpr : Expr
@@ -435,6 +489,8 @@ namespace Shelltrac
             Object = obj;
             MemberName = memberName;
         }
+        
+        public override T Accept<T>(IExprVisitor<T> visitor) => visitor.Visit(this);
     }
 
     public class RangeExpr : Expr
@@ -447,6 +503,8 @@ namespace Shelltrac
             Start = start;
             End = end;
         }
+        
+        public override T Accept<T>(IExprVisitor<T> visitor) => visitor.Visit(this);
     }
 
     public class ArrayExpr : Expr
@@ -457,6 +515,8 @@ namespace Shelltrac
         {
             Elements = elements;
         }
+        
+        public override T Accept<T>(IExprVisitor<T> visitor) => visitor.Visit(this);
     }
 
     public class IndexExpr : Expr
@@ -469,6 +529,8 @@ namespace Shelltrac
             Target = target;
             Index = index;
         }
+        
+        public override T Accept<T>(IExprVisitor<T> visitor) => visitor.Visit(this);
     }
 
     public class DictExpr : Expr
@@ -491,5 +553,7 @@ namespace Shelltrac
             }
             return null;
         }
+        
+        public override T Accept<T>(IExprVisitor<T> visitor) => visitor.Visit(this);
     }
 }
