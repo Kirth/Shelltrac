@@ -130,7 +130,7 @@ namespace Shelltrac
             Body = body;
         }
         
-        public override EvalResult Accept(IExprVisitor visitor) => visitor.Visit(this);
+        public override T Accept<T>(IExprVisitor<T> visitor) => visitor.Visit(this);
     }
 
     public class ReturnStmt : Stmt
@@ -270,7 +270,7 @@ namespace Shelltrac
         public int Column { get; set; }
         public int Length { get; set; }
         
-        public abstract EvalResult Accept(IExprVisitor visitor);
+        public abstract T Accept<T>(IExprVisitor<T> visitor);
     }
 
     public class LiteralExpr : Expr
@@ -279,7 +279,7 @@ namespace Shelltrac
 
         public LiteralExpr(object value) => Value = value;
         
-        public override EvalResult Accept(IExprVisitor visitor) => visitor.Visit(this);
+        public override T Accept<T>(IExprVisitor<T> visitor) => visitor.Visit(this);
     }
 
     public class InterpolatedStringExpr : Expr
@@ -291,7 +291,7 @@ namespace Shelltrac
             Parts = parts;
         }
         
-        public override EvalResult Accept(IExprVisitor visitor) => visitor.Visit(this);
+        public override T Accept<T>(IExprVisitor<T> visitor) => visitor.Visit(this);
     }
 
     public class VarExpr : Expr
@@ -300,7 +300,7 @@ namespace Shelltrac
 
         public VarExpr(string name) => Name = name;
         
-        public override EvalResult Accept(IExprVisitor visitor) => visitor.Visit(this);
+        public override T Accept<T>(IExprVisitor<T> visitor) => visitor.Visit(this);
     }
 
     public class CallExpr : Expr
@@ -314,7 +314,7 @@ namespace Shelltrac
             Arguments = arguments;
         }
         
-        public override EvalResult Accept(IExprVisitor visitor) => visitor.Visit(this);
+        public override T Accept<T>(IExprVisitor<T> visitor) => visitor.Visit(this);
     }
 
     public class BinaryExpr : Expr
@@ -330,7 +330,7 @@ namespace Shelltrac
             Right = right;
         }
         
-        public override EvalResult Accept(IExprVisitor visitor) => visitor.Visit(this);
+        public override T Accept<T>(IExprVisitor<T> visitor) => visitor.Visit(this);
     }
 
     public class IfExpr : Expr
@@ -346,7 +346,7 @@ namespace Shelltrac
             ElseBlock = elseBlock;
         }
         
-        public override EvalResult Accept(IExprVisitor visitor) => visitor.Visit(this);
+        public override T Accept<T>(IExprVisitor<T> visitor) => visitor.Visit(this);
     }
 
     public class ForExpr : Expr
@@ -362,7 +362,7 @@ namespace Shelltrac
             Body = body;
         }
         
-        public override EvalResult Accept(IExprVisitor visitor) => visitor.Visit(this);
+        public override T Accept<T>(IExprVisitor<T> visitor) => visitor.Visit(this);
     }
 
     public class LoopYieldStmt : Stmt
@@ -403,7 +403,7 @@ namespace Shelltrac
             Body = body;
         }
         
-        public override EvalResult Accept(IExprVisitor visitor) => visitor.Visit(this);
+        public override T Accept<T>(IExprVisitor<T> visitor) => visitor.Visit(this);
     }
 
     public class ShellExpr : Expr
@@ -417,7 +417,7 @@ namespace Shelltrac
             Parser = parser;
         }
         
-        public override EvalResult Accept(IExprVisitor visitor) => visitor.Visit(this);
+        public override T Accept<T>(IExprVisitor<T> visitor) => visitor.Visit(this);
     }
 
     public abstract class ParserConfig { }
@@ -476,7 +476,7 @@ namespace Shelltrac
             Parser = parser;
         }
         
-        public override EvalResult Accept(IExprVisitor visitor) => visitor.Visit(this);
+        public override T Accept<T>(IExprVisitor<T> visitor) => visitor.Visit(this);
     }
 
     public class MemberAccessExpr : Expr
@@ -490,7 +490,7 @@ namespace Shelltrac
             MemberName = memberName;
         }
         
-        public override EvalResult Accept(IExprVisitor visitor) => visitor.Visit(this);
+        public override T Accept<T>(IExprVisitor<T> visitor) => visitor.Visit(this);
     }
 
     public class RangeExpr : Expr
@@ -504,7 +504,7 @@ namespace Shelltrac
             End = end;
         }
         
-        public override EvalResult Accept(IExprVisitor visitor) => visitor.Visit(this);
+        public override T Accept<T>(IExprVisitor<T> visitor) => visitor.Visit(this);
     }
 
     public class ArrayExpr : Expr
@@ -516,7 +516,7 @@ namespace Shelltrac
             Elements = elements;
         }
         
-        public override EvalResult Accept(IExprVisitor visitor) => visitor.Visit(this);
+        public override T Accept<T>(IExprVisitor<T> visitor) => visitor.Visit(this);
     }
 
     public class IndexExpr : Expr
@@ -530,7 +530,7 @@ namespace Shelltrac
             Index = index;
         }
         
-        public override EvalResult Accept(IExprVisitor visitor) => visitor.Visit(this);
+        public override T Accept<T>(IExprVisitor<T> visitor) => visitor.Visit(this);
     }
 
     public class DictExpr : Expr
@@ -554,6 +554,6 @@ namespace Shelltrac
             return null;
         }
         
-        public override EvalResult Accept(IExprVisitor visitor) => visitor.Visit(this);
+        public override T Accept<T>(IExprVisitor<T> visitor) => visitor.Visit(this);
     }
 }
