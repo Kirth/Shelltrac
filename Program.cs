@@ -11,6 +11,14 @@ namespace Shelltrac
     {
         static async Task<int> Main(string[] args)
         {
+            // Check for benchmark command
+            if (args.Length > 0 && args[0] == "benchmark")
+            {
+                var benchmarkArgs = args.Length > 1 ? args[1..] : new string[0];
+                Shelltrac.Benchmarks.PerformanceTestRunner.MainBenchmarks(benchmarkArgs);
+                return 0;
+            }
+
             var scriptArgument = new Argument<FileInfo>(
                 "script",
                 description: "Script file to execute",
