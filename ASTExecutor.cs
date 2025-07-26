@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Linq;
+using System.Linq.Expressions;
 using System.Reflection; // just for BindingFlags
 using System.Text;
 using System.Threading;
@@ -191,7 +192,7 @@ namespace Shelltrac
         {
             _scopeStack.Clear();
             _scopeStack.Add(new ExecutionScope(
-                new SourceLocation(1, 1, "Parallel execution start", _scriptName), 
+                new SourceLocation(1, 1, "Parallel execution start", _scriptName),
                 baseEnvironment
             ));
         }
@@ -939,7 +940,7 @@ namespace Shelltrac
                             // Use shared executor with isolated immutable state
                             var capturedEnvironment = _context.GetAllVariables();
                             var environmentWithLoopVar = capturedEnvironment.SetItem(pf.IteratorVar, item);
-                            
+
                             // Create a temporary isolated executor for this task
                             var isolatedExecutor = new Executor(_scriptPath, _sourceCode);
                             isolatedExecutor._context.ResetScopes(environmentWithLoopVar);
@@ -1094,40 +1095,53 @@ namespace Shelltrac
                 );
 
             var type = parent.GetType();
+            var key = (type, memberName);
 
-            // First, look for instance methods
-            var instanceMethods = type.GetMethods(BindingFlags.Instance | BindingFlags.Public)
-                .Where(m => string.Equals(m.Name, memberName, StringComparison.OrdinalIgnoreCase))
-                .ToList();
+            // Get or compile member access
+            var compiledAccess = _memberCache.GetOrAdd(key, k => CompileMemberAccess(k.Item1, k.Item2));
 
-            if (instanceMethods.Any())
+            switch (compiledAccess.Type)
             {
-                return new ReflectionCallable(parent, instanceMethods);
+                case MemberType.Method:
+                    return new ReflectionCallable(parent, compiledAccess.Methods!);
+
+                case MemberType.ExtensionMethod:
+                    return new ExtensionMethodCallable(parent, compiledAccess.ExtensionMethods!);
+
+                case MemberType.Property:
+                    if (compiledAccess.CompiledProperty != null)
+                    {
+                        // Use compiled property accessor for faster access
+                        return compiledAccess.CompiledProperty(parent);
+                    }
+                    else
+                    {
+                        // Fallback to reflection if compilation failed
+                        var property = type.GetProperty(memberName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase);
+                        return property?.GetValue(parent);
+                    }
+
+                case MemberType.Field:
+                    if (compiledAccess.CompiledProperty != null) // Using CompiledProperty for field access too
+                    {
+                        // Use compiled field accessor for faster access
+                        return compiledAccess.CompiledProperty(parent);
+                    }
+                    else
+                    {
+                        // Fallback to reflection if compilation failed
+                        var field = type.GetField(memberName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase);
+                        return field?.GetValue(parent);
+                    }
+
+                case MemberType.None:
+                default:
+                    throw new RuntimeException(
+                        $"Member '{memberName}' not found on object of type {type.Name}",
+                        _context.CurrentLocation.Line,
+                        _context.CurrentLocation.Column
+                    );
             }
-
-            // Generalized extension search
-            var extMethods = FindExtensionMethods(type, memberName);
-            if (extMethods.Any())
-            {
-                return new ExtensionMethodCallable(parent, extMethods);
-            }
-
-            // Fall back to properties
-            var property = type.GetProperty(
-                memberName,
-                BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase
-            );
-
-            if (property != null)
-            {
-                return property.GetValue(parent);
-            }
-
-            throw new RuntimeException(
-                $"Member '{memberName}' not found on object of type {type.Name}",
-                _context.CurrentLocation.Line,
-                _context.CurrentLocation.Column
-            );
         }
 
         private object EvalBinary(BinaryExpr bin)
@@ -1253,7 +1267,7 @@ namespace Shelltrac
             }
         }
 
-        private async Task<object?> ExecuteShellCommandAsync(string command, ParserConfig parser, int line, int column, 
+        private async Task<object?> ExecuteShellCommandAsync(string command, ParserConfig parser, int line, int column,
             CancellationToken cancellationToken = default, TimeSpan? timeout = null)
         {
             try
@@ -1270,7 +1284,7 @@ namespace Shelltrac
 
                 // Create combined cancellation token with timeout
                 using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                if (timeout.HasValue) 
+                if (timeout.HasValue)
                     cts.CancelAfter(timeout.Value);
 
                 var sw = Stopwatch.StartNew();
@@ -1343,7 +1357,7 @@ namespace Shelltrac
                     {
                         throw new TimeoutException($"Shell command timed out after {timeout.Value.TotalSeconds} seconds: {command}");
                     }
-                    
+
                     throw; // Re-throw cancellation
                 }
             }
@@ -1573,7 +1587,7 @@ namespace Shelltrac
             while ((line = await output.ReadLineAsync()) != null)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                
+
                 // Call the line processor function for each line
                 _context.PushScope();
                 try
@@ -1625,7 +1639,7 @@ namespace Shelltrac
             while (continueProcessing && (line = await output.ReadLineAsync()) != null)
             {
                 cancellationToken.ThrowIfCancellationRequested();
-                
+
                 _context.PushScope();
                 try
                 {
@@ -1886,6 +1900,117 @@ namespace Shelltrac
         // A cache to avoid repeated reflection
         private static readonly ConcurrentDictionary<(Type, string), List<MethodInfo>> _extMethodCache =
             new ConcurrentDictionary<(Type, string), List<MethodInfo>>();
+
+        // Compiled member access cache for better performance
+        private static readonly ConcurrentDictionary<(Type, string), CompiledMemberAccess> _memberCache =
+            new ConcurrentDictionary<(Type, string), CompiledMemberAccess>();
+
+        public enum MemberType
+        {
+            None,
+            Property,
+            Field,
+            Method,
+            ExtensionMethod
+        }
+
+        public readonly struct CompiledMemberAccess
+        {
+            public readonly MemberType Type;
+            public readonly Func<object, object>? CompiledProperty;
+            public readonly Func<object, object?, object>? CompiledField;
+            public readonly List<MethodInfo>? Methods;
+            public readonly List<MethodInfo>? ExtensionMethods;
+            public readonly object? Parent;
+
+            public CompiledMemberAccess(MemberType type, Func<object, object>? compiledProperty = null,
+                Func<object, object?, object>? compiledField = null, List<MethodInfo>? methods = null,
+                List<MethodInfo>? extensionMethods = null, object? parent = null)
+            {
+                Type = type;
+                CompiledProperty = compiledProperty;
+                CompiledField = compiledField;
+                Methods = methods;
+                ExtensionMethods = extensionMethods;
+                Parent = parent;
+            }
+        }
+
+        private CompiledMemberAccess CompileMemberAccess(Type type, string memberName)
+        {
+            try
+            {
+                // First try to find instance methods
+                var instanceMethods = type.GetMethods(BindingFlags.Instance | BindingFlags.Public)
+                    .Where(m => string.Equals(m.Name, memberName, StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+
+                if (instanceMethods.Any())
+                {
+                    return new CompiledMemberAccess(MemberType.Method, methods: instanceMethods);
+                }
+
+                // Try extension methods
+                var extMethods = FindExtensionMethods(type, memberName);
+                if (extMethods.Any())
+                {
+                    return new CompiledMemberAccess(MemberType.ExtensionMethod, extensionMethods: extMethods);
+                }
+
+                // Try properties
+                var property = type.GetProperty(memberName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase);
+                if (property != null)
+                {
+                    try
+                    {
+                        // Compile property access using Expression trees
+                        var parameter = Expression.Parameter(typeof(object), "obj");
+                        var castParameter = Expression.Convert(parameter, type);
+                        var propertyAccess = Expression.Property(castParameter, property);
+                        var castResult = Expression.Convert(propertyAccess, typeof(object));
+                        var lambda = Expression.Lambda<Func<object, object>>(castResult, parameter);
+                        var compiledProperty = lambda.Compile();
+
+                        return new CompiledMemberAccess(MemberType.Property, compiledProperty: compiledProperty);
+                    }
+                    catch
+                    {
+                        // Fallback to reflection if compilation fails
+                        return new CompiledMemberAccess(MemberType.Property);
+                    }
+                }
+
+                // Try fields
+                var field = type.GetField(memberName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase);
+                if (field != null)
+                {
+                    try
+                    {
+                        // Compile field access using Expression trees
+                        var parameter = Expression.Parameter(typeof(object), "obj");
+                        var castParameter = Expression.Convert(parameter, type);
+                        var fieldAccess = Expression.Field(castParameter, field);
+                        var castResult = Expression.Convert(fieldAccess, typeof(object));
+                        var lambda = Expression.Lambda<Func<object, object>>(castResult, parameter);
+                        var compiledField = lambda.Compile();
+
+                        return new CompiledMemberAccess(MemberType.Field, compiledProperty: compiledField);
+                    }
+                    catch
+                    {
+                        // Fallback to reflection if compilation fails
+                        return new CompiledMemberAccess(MemberType.Field);
+                    }
+                }
+
+                return new CompiledMemberAccess(MemberType.None);
+            }
+            catch
+            {
+                // If anything fails, return None type
+                return new CompiledMemberAccess(MemberType.None);
+            }
+        }
 
         private List<MethodInfo> FindExtensionMethods(Type targetType, string methodName)
         {
