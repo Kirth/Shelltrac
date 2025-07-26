@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Linq;
 using System.Reflection; // just for BindingFlags
@@ -13,27 +14,38 @@ namespace Shelltrac
 {
     public class ExecutionScope
     {
-        // Variable storage
-        public Dictionary<string, object?> Variables { get; } = new Dictionary<string, object?>();
+        // Variable storage - now immutable
+        public ImmutableDictionary<string, object?> Variables { get; }
 
         // Execution tracking
         public SourceLocation Location { get; set; }
 
         public ExecutionScope(
             SourceLocation location,
-            Dictionary<string, object?>? parentVariables = null
+            ImmutableDictionary<string, object?>? parentVariables = null
         )
         {
             Location = location;
 
-            // Optionally inherit variables from parent scope
-            if (parentVariables != null)
+            // Inherit variables from parent scope or start with empty
+            Variables = parentVariables ?? ImmutableDictionary<string, object?>.Empty;
+        }
+
+        // Helper method to create a new scope with updated variables
+        public ExecutionScope WithVariable(string name, object? value)
+        {
+            return new ExecutionScope(Location, Variables.SetItem(name, value));
+        }
+
+        // Helper method to create a new scope with multiple variables
+        public ExecutionScope WithVariables(IEnumerable<KeyValuePair<string, object?>> variables)
+        {
+            var newVariables = Variables;
+            foreach (var kvp in variables)
             {
-                foreach (var kvp in parentVariables)
-                {
-                    Variables[kvp.Key] = kvp.Value;
-                }
+                newVariables = newVariables.SetItem(kvp.Key, kvp.Value);
             }
+            return new ExecutionScope(Location, newVariables);
         }
     }
 
@@ -78,7 +90,7 @@ namespace Shelltrac
                     _scriptName
                 );
 
-            var parentVars = inheritVariables ? CurrentScope.Variables : null;
+            var parentVars = inheritVariables ? CurrentScope.Variables : ImmutableDictionary<string, object?>.Empty;
             _scopeStack.Add(new ExecutionScope(location, parentVars));
         }
 
@@ -133,16 +145,16 @@ namespace Shelltrac
         }
 
         // Get all variables (for parallel task isolation)
-        public Dictionary<string, object?> GetAllVariables()
+        public ImmutableDictionary<string, object?> GetAllVariables()
         {
-            var result = new Dictionary<string, object?>();
+            var result = ImmutableDictionary<string, object?>.Empty;
 
             // Start with globals and override with more local scopes
             for (int i = 0; i < _scopeStack.Count; i++)
             {
                 foreach (var kvp in _scopeStack[i].Variables)
                 {
-                    result[kvp.Key] = kvp.Value;
+                    result = result.SetItem(kvp.Key, kvp.Value);
                 }
             }
 
@@ -156,11 +168,45 @@ namespace Shelltrac
             {
                 if (_scopeStack[i].Variables.ContainsKey(name))
                 {
-                    _scopeStack[i].Variables[name] = value;
+                    // Create new scope with updated variable
+                    var oldScope = _scopeStack[i];
+                    var newScope = new ExecutionScope(oldScope.Location, oldScope.Variables.SetItem(name, value));
+                    _scopeStack[i] = newScope;
                     return true;
                 }
             }
             return false;
+        }
+
+        // Add a variable to the current scope
+        public void SetCurrentScopeVariable(string name, object? value)
+        {
+            var currentScope = CurrentScope;
+            var newScope = new ExecutionScope(currentScope.Location, currentScope.Variables.SetItem(name, value));
+            _scopeStack[_scopeStack.Count - 1] = newScope;
+        }
+
+        // Reset scopes for parallel execution with a new base environment
+        public void ResetScopes(ImmutableDictionary<string, object?> baseEnvironment)
+        {
+            _scopeStack.Clear();
+            _scopeStack.Add(new ExecutionScope(
+                new SourceLocation(1, 1, "Parallel execution start", _scriptName), 
+                baseEnvironment
+            ));
+        }
+
+        // Replace the current scope with a new one containing additional variables
+        public void UpdateCurrentScopeWithVariables(IEnumerable<KeyValuePair<string, object?>> variables)
+        {
+            var currentScope = CurrentScope;
+            var newVariables = currentScope.Variables;
+            foreach (var kvp in variables)
+            {
+                newVariables = newVariables.SetItem(kvp.Key, kvp.Value);
+            }
+            var newScope = new ExecutionScope(currentScope.Location, newVariables);
+            _scopeStack[_scopeStack.Count - 1] = newScope;
         }
 
         // Extract source code fragment for error context
@@ -223,7 +269,7 @@ namespace Shelltrac
             _sourceCode = sourceCode;
             _context = new ExecutionContext(scriptPath, sourceCode);
 
-            _context.GlobalScope.Variables["read_file"] = new BuiltinFunction(
+            _context.SetCurrentScopeVariable("read_file", new BuiltinFunction(
                 "read_file",
                 (exec, args) =>
                 {
@@ -258,10 +304,10 @@ namespace Shelltrac
                         );
                     }
                 }
-            );
+            ));
 
             // Register built-in functions in the global scope
-            _context.GlobalScope.Variables["wait"] = new BuiltinFunction(
+            _context.SetCurrentScopeVariable("wait", new BuiltinFunction(
                 "wait",
                 (exec, args) =>
                 {
@@ -276,9 +322,9 @@ namespace Shelltrac
                     System.Threading.Thread.Sleep(ms);
                     return null;
                 }
-            );
+            ));
 
-            _context.GlobalScope.Variables["instantiate"] = new BuiltinFunction(
+            _context.SetCurrentScopeVariable("instantiate", new BuiltinFunction(
                 "instantiate",
                 (exec, args) =>
                 {
@@ -354,17 +400,13 @@ namespace Shelltrac
 
                     return ctor.Invoke(converted);
                 }
-            );
-            ;
+            ));
         }
 
         public void PushEnvironment(Dictionary<string, object?> env)
         {
             _context.PushScope();
-            foreach (var kvp in env)
-            {
-                _context.CurrentScope.Variables[kvp.Key] = kvp.Value;
-            }
+            _context.UpdateCurrentScopeWithVariables(env);
         }
 
         public void PopEnvironment()
@@ -546,9 +588,7 @@ namespace Shelltrac
                         // Bind parameters to values
                         for (int i = 0; i < handler.Parameters.Count; i++)
                         {
-                            _context.CurrentScope.Variables[handler.Parameters[i]] = evaluatedArgs[
-                                i
-                            ];
+                            _context.SetCurrentScopeVariable(handler.Parameters[i], evaluatedArgs[i]);
                         }
 
                         // Execute the handler body
@@ -670,7 +710,7 @@ namespace Shelltrac
                 string varName = stmt.VarNames[i];
                 if (varName != "_") // Skip _ wildcards
                 {
-                    _context.CurrentScope.Variables[varName] = values[i];
+                    _context.SetCurrentScopeVariable(varName, values[i]);
                 }
             }
         }
@@ -711,7 +751,7 @@ namespace Shelltrac
                 try
                 {
                     // Set the loop variable
-                    _context.CurrentScope.Variables[fs.IteratorVar] = item;
+                    _context.SetCurrentScopeVariable(fs.IteratorVar, item);
 
                     // Execute the body
                     ExecuteBlock(fs.Body);
@@ -751,10 +791,10 @@ namespace Shelltrac
         public void Visit(FunctionStmt stmt)
         {
             // Store function in the current scope
-            _context.CurrentScope.Variables[stmt.Name] = new Function(
+            _context.SetCurrentScopeVariable(stmt.Name, new Function(
                 stmt,
-                new Dictionary<string, object?>(_context.CurrentScope.Variables)
-            );
+                _context.GetAllVariables()
+            ));
         }
 
         public void Visit(ReturnStmt stmt)
@@ -786,7 +826,7 @@ namespace Shelltrac
         {
             // Always put in current scope
             object val = Eval(stmt.Initializer)!;
-            _context.CurrentScope.Variables[stmt.VarName] = val;
+            _context.SetCurrentScopeVariable(stmt.VarName, val);
         }
 
         public void Visit(AssignStmt stmt)
@@ -896,16 +936,13 @@ namespace Shelltrac
                     Task.Run(
                         () =>
                         {
-                            // Create an isolated executor for this parallel task
+                            // Use shared executor with isolated immutable state
+                            var capturedEnvironment = _context.GetAllVariables();
+                            var environmentWithLoopVar = capturedEnvironment.SetItem(pf.IteratorVar, item);
+                            
+                            // Create a temporary isolated executor for this task
                             var isolatedExecutor = new Executor(_scriptPath, _sourceCode);
-
-                            // Copy relevant state
-                            foreach (var variable in _context.GetAllVariables())
-                                isolatedExecutor._context.GlobalScope.Variables[variable.Key] =
-                                    variable.Value;
-
-                            // Add iterator variable
-                            isolatedExecutor._context.GlobalScope.Variables[pf.IteratorVar] = item;
+                            isolatedExecutor._context.ResetScopes(environmentWithLoopVar);
 
                             try
                             {
@@ -1317,7 +1354,7 @@ namespace Shelltrac
                 _context.PushScope();
                 try
                 {
-                    _context.CurrentScope.Variables[parser.LineProcessor.Parameters[0]] = line;
+                    _context.SetCurrentScopeVariable(parser.LineProcessor.Parameters[0], line);
                     result += EvaluateBlockExpression(parser.LineProcessor.Body);
                 }
                 catch (Exception ex)
@@ -1367,8 +1404,8 @@ namespace Shelltrac
                 try
                 {
                     // Set up parameters for line processor: fn(line, acc) { ... }
-                    _context.CurrentScope.Variables[parser.LineProcessor.Parameters[0]] = line;
-                    _context.CurrentScope.Variables[parser.LineProcessor.Parameters[1]] = accumulator;
+                    _context.SetCurrentScopeVariable(parser.LineProcessor.Parameters[0], line);
+                    _context.SetCurrentScopeVariable(parser.LineProcessor.Parameters[1], accumulator);
 
                     // Execute the line processor and update accumulator
                     try
@@ -1376,7 +1413,7 @@ namespace Shelltrac
                         var result = EvaluateBlockExpression(parser.LineProcessor.Body);
                         // A key issue - we need to get the latest value of the accumulator
                         // from the current scope, not just the function return value
-                        var updatedAccumulator = _context.CurrentScope.Variables[parser.LineProcessor.Parameters[1]];
+                        var updatedAccumulator = _context.LookupVariable(parser.LineProcessor.Parameters[1]);
                         if (updatedAccumulator != null)
                         {
                             accumulator = updatedAccumulator;
@@ -1404,8 +1441,8 @@ namespace Shelltrac
                         _context.PushScope();
                         try
                         {
-                            _context.CurrentScope.Variables[parser.ErrorHandler.Parameters[0]] = ex;
-                            _context.CurrentScope.Variables[parser.ErrorHandler.Parameters[1]] = line;
+                            _context.SetCurrentScopeVariable(parser.ErrorHandler.Parameters[0], ex);
+                            _context.SetCurrentScopeVariable(parser.ErrorHandler.Parameters[1], line);
 
                             // If error handler returns false, abort processing
                             bool shouldContinue = true;
@@ -1452,7 +1489,7 @@ namespace Shelltrac
                 _context.PushScope();
                 try
                 {
-                    _context.CurrentScope.Variables[parser.Complete.Parameters[0]] = accumulator;
+                    _context.SetCurrentScopeVariable(parser.Complete.Parameters[0], accumulator);
                     try
                     {
                         var result = EvaluateBlockExpression(parser.Complete.Body);
@@ -1629,52 +1666,51 @@ namespace Shelltrac
         #region Utility Methods
 
         // A cache to avoid repeated reflection
-        private static readonly Dictionary<(Type, string), List<MethodInfo>> _extMethodCache =
-            new Dictionary<(Type, string), List<MethodInfo>>();
+        private static readonly ConcurrentDictionary<(Type, string), List<MethodInfo>> _extMethodCache =
+            new ConcurrentDictionary<(Type, string), List<MethodInfo>>();
 
         private List<MethodInfo> FindExtensionMethods(Type targetType, string methodName)
         {
             var key = (targetType, methodName);
-            if (_extMethodCache.TryGetValue(key, out var methods))
-                return methods;
-
-            methods = new List<MethodInfo>();
-
-            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+            return _extMethodCache.GetOrAdd(key, k =>
             {
-                foreach (var type in assembly.GetTypes())
+                var methods = new List<MethodInfo>();
+
+                foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
                 {
-                    // Only consider static classes
-                    if (!type.IsAbstract || !type.IsSealed)
-                        continue;
-
-                    foreach (
-                        var method in type.GetMethods(BindingFlags.Static | BindingFlags.Public)
-                    )
+                    foreach (var type in assembly.GetTypes())
                     {
-                        if (
-                            !string.Equals(
-                                method.Name,
-                                methodName,
-                                StringComparison.OrdinalIgnoreCase
-                            )
+                        // Only consider static classes
+                        if (!type.IsAbstract || !type.IsSealed)
+                            continue;
+
+                        foreach (
+                            var method in type.GetMethods(BindingFlags.Static | BindingFlags.Public)
                         )
-                            continue;
-
-                        var parameters = method.GetParameters();
-                        if (parameters.Length == 0)
-                            continue;
-
-                        if (parameters[0].ParameterType.IsAssignableFrom(targetType))
                         {
-                            methods.Add(method);
+                            if (
+                                !string.Equals(
+                                    method.Name,
+                                    methodName,
+                                    StringComparison.OrdinalIgnoreCase
+                                )
+                            )
+                                continue;
+
+                            var parameters = method.GetParameters();
+                            if (parameters.Length == 0)
+                                continue;
+
+                            if (parameters[0].ParameterType.IsAssignableFrom(targetType))
+                            {
+                                methods.Add(method);
+                            }
                         }
                     }
                 }
-            }
 
-            _extMethodCache[key] = methods;
-            return methods;
+                return methods;
+            });
         }
 
         // Comparison operators
@@ -1882,7 +1918,7 @@ namespace Shelltrac
             foreach (object item in en)
             {
                 _context.PushScope();
-                _context.CurrentScope.Variables[expr.IteratorVar] = item;
+                _context.SetCurrentScopeVariable(expr.IteratorVar, item);
 
                 try
                 {
@@ -2075,9 +2111,9 @@ namespace Shelltrac
     public class Function : Callable
     {
         public FunctionStmt Declaration { get; }
-        public Dictionary<string, object?> Closure { get; } // capture environment if needed
+        public ImmutableDictionary<string, object?> Closure { get; } // capture environment if needed
 
-        public Function(FunctionStmt declaration, Dictionary<string, object?> closure)
+        public Function(FunctionStmt declaration, ImmutableDictionary<string, object?> closure)
         {
             Declaration = declaration;
             Closure = closure;
@@ -2085,8 +2121,8 @@ namespace Shelltrac
 
         public object? Call(Executor executor, List<object?> arguments)
         {
-            // Create new environment (shallow copy of closure)
-            var localEnv = new Dictionary<string, object?>(Closure);
+            // Create new environment from immutable closure
+            var localEnv = Closure.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
             for (int i = 0; i < Declaration.Parameters.Count; i++)
             {
                 localEnv[Declaration.Parameters[i]] = i < arguments.Count ? arguments[i] : null;
