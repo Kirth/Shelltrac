@@ -275,22 +275,20 @@ namespace Shelltrac
                 (exec, args) =>
                 {
                     if (args.Count != 1)
-                        throw new RuntimeException(
-                            "read_file() expects exactly one argument (file path).",
-                            _context.CurrentLocation.Line,
-                            _context.CurrentLocation.Column
-                        );
+                    {
+                        var context = CreateErrorContextWithCallStack("read_file()");
+                        throw context.CreateRuntimeException("read_file() expects exactly one argument (file path).");
+                    }
 
                     string filePath = args[0]?.ToString() ?? "";
 
                     try
                     {
                         if (!File.Exists(filePath))
-                            throw new RuntimeException(
-                                $"File not found: {filePath}",
-                                _context.CurrentLocation.Line,
-                                _context.CurrentLocation.Column
-                            );
+                        {
+                            var context = CreateErrorContextWithCallStack("read_file()");
+                            throw context.CreateRuntimeException($"File not found: {filePath}");
+                        }
 
                         return File.ReadAllText(filePath);
                     }
@@ -618,6 +616,10 @@ namespace Shelltrac
                     Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {Helper.ToPrettyString(val)}");
                     break;
 
+                case "echo":
+                    Console.WriteLine(Helper.ToPrettyString(val));
+                    break;
+
                 case "ssh":
                     if (inv.Argument is SshExpr sshExpr)
                     {
@@ -770,6 +772,53 @@ namespace Shelltrac
             }
         }
 
+        private void HandleWhile(WhileStmt ws)
+        {
+            const int MAX_ITERATIONS = 100000; // Prevent infinite loops
+            int iterations = 0;
+
+            while (true)
+            {
+                iterations++;
+                if (iterations > MAX_ITERATIONS)
+                {
+                    throw new RuntimeException(
+                        $"While loop exceeded maximum iterations ({MAX_ITERATIONS}). Possible infinite loop.",
+                        ws.Line,
+                        ws.Column
+                    );
+                }
+
+                // Evaluate the condition
+                object? conditionResult = Eval(ws.Condition);
+                bool isTruthy = ConvertToBool(conditionResult!);
+
+                if (!isTruthy)
+                {
+                    break; // Exit the loop
+                }
+
+                // Create a new scope for this iteration
+                _context.PushScope();
+
+                try
+                {
+                    // Execute the body
+                    ExecuteBlock(ws.Body);
+                }
+                catch (Exception ex) when (!(ex is ReturnException || ex is YieldException))
+                {
+                    // Rethrow errors to stop loop execution
+                    throw;
+                }
+                finally
+                {
+                    // Always clean up the scope
+                    _context.PopScope();
+                }
+            }
+        }
+
         #endregion
 
         #region Statement Visitor Methods
@@ -835,12 +884,8 @@ namespace Shelltrac
             object rhsVal = Eval(stmt.ValueExpr)!;
             if (!_context.AssignVariable(stmt.VarName, rhsVal))
             {
-                throw new RuntimeException(
-                    $"Variable '{stmt.VarName}' not found.",
-                    stmt.Line,
-                    stmt.Column,
-                    _context.GetContextFragment(stmt.Line)
-                );
+                var context = CreateErrorContext(stmt.Line, stmt.Column);
+                throw context.CreateRuntimeException($"Variable '{stmt.VarName}' not found.");
             }
         }
 
@@ -857,6 +902,11 @@ namespace Shelltrac
         public void Visit(ForStmt stmt)
         {
             HandleFor(stmt);
+        }
+
+        public void Visit(WhileStmt stmt)
+        {
+            HandleWhile(stmt);
         }
 
         public void Visit(LoopYieldStmt stmt)
@@ -1166,11 +1216,11 @@ namespace Shelltrac
                 case "+":
                     return AddValues(leftVal, rightVal);
                 case "*":
-                    return MultiplyValues(leftVal, rightVal);
+                    return MultiplyValues(leftVal, rightVal, bin.Line, bin.Column);
                 case "/":
-                    return DivideValues(leftVal, rightVal);
+                    return DivideValues(leftVal, rightVal, bin.Line, bin.Column);
                 case "-":
-                    return SubtractValues(leftVal, rightVal);
+                    return SubtractValues(leftVal, rightVal, bin.Line, bin.Column);
                 default:
                     throw new RuntimeException(
                         $"Unsupported binary operator: {bin.Op}",
@@ -2117,51 +2167,39 @@ namespace Shelltrac
             return (left?.ToString() ?? "") + (right?.ToString() ?? "");
         }
 
-        private object MultiplyValues(object left, object right)
+        private object MultiplyValues(object left, object right, int line = 0, int column = 0)
         {
             if (left is int li && right is int ri)
             {
                 return li * ri;
             }
-            throw new RuntimeException(
-                $"Cannot multiply {left} and {right} - expected numeric values",
-                _context.CurrentLocation.Line,
-                _context.CurrentLocation.Column
-            );
+            var context = CreateErrorContext(line, column);
+            throw context.CreateRuntimeException($"Cannot multiply {left} and {right} - expected numeric values");
         }
 
-        private object DivideValues(object left, object right)
+        private object DivideValues(object left, object right, int line = 0, int column = 0)
         {
             if (left is int li && right is int ri)
             {
                 if (ri == 0)
-                    throw new RuntimeException(
-                        "Division by zero",
-                        _context.CurrentLocation.Line,
-                        _context.CurrentLocation.Column
-                    );
+                {
+                    var divZeroContext = CreateErrorContext(line, column);
+                    throw divZeroContext.CreateRuntimeException("Division by zero");
+                }
                 return li / ri;
             }
-            throw new RuntimeException(
-                $"Cannot divide {left} and {right} - expected numeric values",
-                _context.CurrentLocation.Line,
-                _context.CurrentLocation.Column,
-                _context.GetContextFragment(_context.CurrentLocation.Line)
-            );
+            var typeErrorContext = CreateErrorContext(line, column);
+            throw typeErrorContext.CreateRuntimeException($"Cannot divide {left} and {right} - expected numeric values");
         }
 
-        private object SubtractValues(object left, object right)
+        private object SubtractValues(object left, object right, int line = 0, int column = 0)
         {
             if (left is int li && right is int ri)
             {
                 return li - ri;
             }
-            throw new RuntimeException(
-                $"Cannot subtract {left} and {right} - expected numeric values",
-                _context.CurrentLocation.Line,
-                _context.CurrentLocation.Column,
-                _context.GetContextFragment(_context.CurrentLocation.Line)
-            );
+            var context = CreateErrorContext(line, column);
+            throw context.CreateRuntimeException($"Cannot subtract {left} and {right} - expected numeric values");
         }
 
         // Type conversion helpers
@@ -2199,13 +2237,38 @@ namespace Shelltrac
 
         public object? Visit(InterpolatedStringExpr expr)
         {
-            var sb = new StringBuilder();
+            // Estimate capacity to reduce StringBuilder reallocations
+            int estimatedCapacity = EstimateInterpolatedStringCapacity(expr.Parts);
+            var sb = new StringBuilder(estimatedCapacity);
+            
             foreach (var part in expr.Parts)
             {
                 object? value = Eval(part);
                 sb.Append(value?.ToString() ?? "");
             }
             return sb.ToString();
+        }
+
+        private static int EstimateInterpolatedStringCapacity(List<Expr> parts)
+        {
+            int capacity = 0;
+            foreach (var part in parts)
+            {
+                if (part is LiteralExpr literal && literal.Value is string str)
+                {
+                    // String literals - we know the exact length
+                    capacity += str.Length;
+                }
+                else
+                {
+                    // Expression parts - estimate based on common types
+                    // Numbers: ~10 chars, booleans: ~5 chars, other: ~20 chars average
+                    capacity += 20;
+                }
+            }
+            
+            // Add 25% buffer for safety, minimum 16 chars
+            return Math.Max(16, (int)(capacity * 1.25));
         }
 
         public object? Visit(VarExpr expr)
@@ -2396,6 +2459,108 @@ namespace Shelltrac
                 map[key] = Eval(valueExpr);
             }
             return map;
+        }
+
+        #endregion
+
+        #region Error Context Methods
+
+        /// <summary>
+        /// Creates a rich error context for the current execution state
+        /// </summary>
+        private ShelltracErrorContext CreateErrorContext(int line = 0, int column = 0, string sourceSnippet = "")
+        {
+            var variables = new Dictionary<string, object?>();
+            
+            // Capture all variables from all scopes for debugging
+            try
+            {
+                var allVariables = _context.GetAllVariables();
+                foreach (var (name, value) in allVariables.Take(20)) // Limit to prevent excessive output
+                {
+                    variables[name] = value;
+                }
+            }
+            catch
+            {
+                // Ignore errors when capturing variables
+            }
+
+            return new ShelltracErrorContext(
+                fileName: _context.CurrentLocation.ScriptName ?? "",
+                line: line > 0 ? line : _context.CurrentLocation.Line,
+                column: column > 0 ? column : _context.CurrentLocation.Column,
+                sourceSnippet: !string.IsNullOrEmpty(sourceSnippet) ? sourceSnippet : GetSourceSnippet(line > 0 ? line : _context.CurrentLocation.Line),
+                variables: variables
+            );
+        }
+
+        /// <summary>
+        /// Creates error context with call stack information
+        /// </summary>
+        private ShelltracErrorContext CreateErrorContextWithCallStack(string currentFunction, int line = 0, int column = 0, string sourceSnippet = "")
+        {
+            var context = CreateErrorContext(line, column, sourceSnippet);
+            return context.PushCallFrame(currentFunction);
+        }
+
+        /// <summary>
+        /// Gets verbose source snippet around the specified line for error reporting
+        /// </summary>
+        private string GetSourceSnippet(int line)
+        {
+            if (string.IsNullOrEmpty(_sourceCode) || line <= 0)
+                return "";
+
+            try
+            {
+                var lines = _sourceCode.Split('\n');
+                if (line > lines.Length)
+                    return "";
+
+                // Show extensive context: 3 lines before, the error line, and 3 lines after
+                var contextLines = 3;
+                var startLine = Math.Max(0, line - contextLines - 1);
+                var endLine = Math.Min(lines.Length - 1, line + contextLines - 1);
+                
+                var snippet = new StringBuilder();
+                snippet.AppendLine();
+                snippet.AppendLine("┌─ Source Code Context ─────────────────────────────────────────────┐");
+                
+                for (int i = startLine; i <= endLine; i++)
+                {
+                    bool isErrorLine = (i == line - 1);
+                    string marker = isErrorLine ? "ERROR→" : "      ";
+                    string lineNum = $"{i + 1}".PadLeft(4);
+                    string codeLine = lines[i];
+                    
+                    if (isErrorLine)
+                    {
+                        snippet.AppendLine($"│ {marker} {lineNum}: {codeLine}");
+                        
+                        // Add column indicator if we have column information
+                        var column = _context.CurrentLocation.Column;
+                        if (column > 0 && column <= codeLine.Length + 1)
+                        {
+                            var spaces = new string(' ', column - 1);
+                            var indicator = "^".PadLeft(Math.Max(1, codeLine.Length - column + 2), '~');
+                            snippet.AppendLine($"│              {spaces}{indicator}");
+                        }
+                    }
+                    else
+                    {
+                        snippet.AppendLine($"│ {marker} {lineNum}: {codeLine}");
+                    }
+                }
+                
+                snippet.AppendLine("└───────────────────────────────────────────────────────────────────┘");
+                
+                return snippet.ToString();
+            }
+            catch
+            {
+                return "";
+            }
         }
 
         #endregion

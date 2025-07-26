@@ -40,7 +40,7 @@ namespace Shelltrac
                 return ParseEvent();
             if (Match(TokenType.TRIGGER))
                 return ParseTrigger();
-            if (Match(TokenType.LOG, TokenType.SH, TokenType.SSH))
+            if (Match(TokenType.LOG, TokenType.ECHO, TokenType.SH, TokenType.SSH))
                 return ParseInvocation();
             if (Match(TokenType.LET))
                 return ParseVarDecl();
@@ -48,6 +48,8 @@ namespace Shelltrac
                 return ParseIf();
             if (Match(TokenType.FOR))
                 return ParseFor();
+            if (Match(TokenType.WHILE))
+                return ParseWhile();
             if (Match(TokenType.EMIT))
             {
                 var value = ParseExpression();
@@ -283,8 +285,8 @@ namespace Shelltrac
 
         private Stmt ParseInvocation()
         {
-            // we matched LOG or SH
-            var keyword = Previous().Lexeme; // "log" or "sh"
+            // we matched LOG, ECHO, SH, or SSH
+            var keyword = Previous().Lexeme; // "log", "echo", "sh", or "ssh"
             // parse an expression for the argument
             Expr expr;
             //Console.WriteLine($"Encountered invocation with keyword {keyword}");
@@ -600,6 +602,14 @@ namespace Shelltrac
             var iterable = ParseExpression();
             var body = ParseBlock();
             return new ForStmt(varName, iterable, body);
+        }
+
+        private Stmt ParseWhile()
+        {
+            // while condition { block }
+            var condition = ParseExpression();
+            var body = ParseBlock();
+            return new WhileStmt(condition, body);
         }
 
         private Expr ParseIfExpr()

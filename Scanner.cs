@@ -13,6 +13,7 @@ namespace Shelltrac
         TRIGGER,
         DO,
         LOG,
+        ECHO,
         SH,
         SSH,
         ONCE,
@@ -20,6 +21,7 @@ namespace Shelltrac
         IF,
         ELSE,
         FOR,
+        WHILE,
         PARALLEL,
         CANCEL,
         OVERRIDE,
@@ -254,19 +256,21 @@ namespace Shelltrac
 
         private void ScanVerbatimString()
         {
-            var sb = new StringBuilder();
-
+            int startPos = _current;
+            
             while (!IsAtEnd() && Peek() != '"')
             {
-                sb.Append(Advance());
+                Advance();
             }
 
             if (IsAtEnd())
                 throw new Exception("Unterminated string at line " + _line);
 
+            // Extract the string span directly without StringBuilder
+            var stringSpan = _source.AsSpan(startPos, _current - startPos);
             Advance(); // consume closing quote
 
-            AddToken(TokenType.VERBATIM_STRING, sb.ToString());
+            AddToken(TokenType.VERBATIM_STRING, stringSpan.ToString());
         }
 
         private void ScanString()
@@ -314,11 +318,31 @@ namespace Shelltrac
 
         private void ProcessRegularString(bool hasEscapes)
         {
+            if (!hasEscapes)
+            {
+                // Fast path for strings without escapes - use span
+                int startPos = _current;
+                while (!IsAtEnd() && Peek() != '"')
+                {
+                    Advance();
+                }
+
+                if (IsAtEnd())
+                    throw new Exception("Unterminated string at line " + _line);
+
+                // Extract the string span directly without StringBuilder
+                var stringSpan = _source.AsSpan(startPos, _current - startPos);
+                Advance(); // consume closing quote
+                AddToken(TokenType.STRING, stringSpan.ToString());
+                return;
+            }
+
+            // Slow path for strings with escapes
             var sb = new StringBuilder();
 
             while (!IsAtEnd() && Peek() != '"')
             {
-                if (hasEscapes && Peek() == '\\')
+                if (Peek() == '\\')
                 {
                     Advance(); // consume backslash
                     char next = Advance();
@@ -359,8 +383,6 @@ namespace Shelltrac
                 throw new Exception("Unterminated string at line " + _line);
 
             Advance(); // consume closing quote
-
-            // This is a regular STRING token for backward compatibility
             AddToken(TokenType.STRING, sb.ToString());
         }
 
@@ -369,7 +391,7 @@ namespace Shelltrac
             // Mark the start of an interpolated string
             AddToken(TokenType.INTERPOLATED_STRING, "");
 
-            var sb = new StringBuilder();
+            var sb = new StringBuilder(256); // Pre-allocate reasonable capacity
             bool inInterpolation = false;
             int braceCount = 0;
             int maxIterations = _source.Length; // Safeguard against infinite loops
@@ -380,7 +402,7 @@ namespace Shelltrac
                 iterations++;
                 if (Peek() == '#' && Peek(1) == '{' && !inInterpolation)
                 {
-                    // Add accumulated string part
+                    // Add accumulated string part using span if possible
                     if (sb.Length > 0)
                     {
                         AddToken(TokenType.STRING, sb.ToString());
@@ -465,6 +487,7 @@ namespace Shelltrac
                 }
                 else
                 {
+                    // For simple characters in interpolated strings, just advance and append
                     sb.Append(Advance());
                 }
             }
@@ -494,27 +517,30 @@ namespace Shelltrac
 
         private void ScanNumber(char first)
         {
-            var sb = new StringBuilder();
-            sb.Append(first);
+            int startPos = _current - 1; // Include the first character
 
             while (!IsAtEnd() && IsDigit(Peek()))
             {
-                sb.Append(Advance());
+                Advance();
             }
-            AddToken(TokenType.NUMBER, sb.ToString());
+            
+            // Extract the number span directly
+            var numberSpan = _source.AsSpan(startPos, _current - startPos);
+            AddToken(TokenType.NUMBER, numberSpan.ToString());
         }
 
         private void ScanIdentifierOrKeyword(char first)
         {
-            var sb = new StringBuilder();
-            sb.Append(first);
+            int startPos = _current - 1; // Include the first character
 
             while (!IsAtEnd() && (IsAlphaNumeric(Peek()) || Peek() == '_' || Peek() == '-'))
             {
-                sb.Append(Advance());
+                Advance();
             }
 
-            string text = sb.ToString().ToLower();
+            // Extract the identifier span directly
+            var identifierSpan = _source.AsSpan(startPos, _current - startPos);
+            string text = identifierSpan.ToString().ToLower();
             switch (text)
             {
                 case "task":
@@ -535,6 +561,9 @@ namespace Shelltrac
                     break;
                 case "log":
                     AddToken(TokenType.LOG, text);
+                    break;
+                case "echo":
+                    AddToken(TokenType.ECHO, text);
                     break;
                 case "sh":
                     AddToken(TokenType.SH, text);
@@ -566,6 +595,9 @@ namespace Shelltrac
                 case "for":
                     AddToken(TokenType.FOR, text);
                     break;
+                case "while":
+                    AddToken(TokenType.WHILE, text);
+                    break;
                 case "let":
                     AddToken(TokenType.LET, text);
                     break;
@@ -591,7 +623,7 @@ namespace Shelltrac
                     AddToken(TokenType.AS, text);
                     break;
                 default:
-                    AddToken(TokenType.IDENTIFIER, sb.ToString());
+                    AddToken(TokenType.IDENTIFIER, identifierSpan.ToString());
                     break;
 
 

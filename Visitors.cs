@@ -15,6 +15,7 @@ namespace Shelltrac
         void Visit(IndexAssignStmt stmt);
         void Visit(IfStmt stmt);
         void Visit(ForStmt stmt);
+        void Visit(WhileStmt stmt);
         void Visit(LoopYieldStmt stmt);
     }
 

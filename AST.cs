@@ -262,6 +262,20 @@ namespace Shelltrac
         public override void Accept(IStmtVisitor visitor) => visitor.Visit(this);
     }
 
+    public class WhileStmt : Stmt
+    {
+        public Expr Condition { get; }
+        public List<Stmt> Body { get; }
+
+        public WhileStmt(Expr condition, List<Stmt> body)
+        {
+            Condition = condition;
+            Body = body;
+        }
+        
+        public override void Accept(IStmtVisitor visitor) => visitor.Visit(this);
+    }
+
     // ----- Expressions -----
 
     public abstract class Expr
