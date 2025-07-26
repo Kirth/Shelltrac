@@ -270,7 +270,7 @@ namespace Shelltrac
             foreach (var kvp in variables)
             {
                 // Skip builtin functions and internal variables
-                if (kvp.Value is BuiltinFunction || kvp.Key.StartsWith("_"))
+                if (kvp.Value is TypedBuiltinFunction || kvp.Key.StartsWith("_"))
                     continue;
 
                 Console.WriteLine($"{kvp.Key} = {Helper.ToPrettyString(kvp.Value)}");

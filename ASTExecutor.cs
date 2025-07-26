@@ -270,136 +270,12 @@ namespace Shelltrac
             _sourceCode = sourceCode;
             _context = new ExecutionContext(scriptPath, sourceCode);
 
-            _context.SetCurrentScopeVariable("read_file", new BuiltinFunction(
-                "read_file",
-                (exec, args) =>
-                {
-                    if (args.Count != 1)
-                    {
-                        var context = CreateErrorContextWithCallStack("read_file()");
-                        throw context.CreateRuntimeException("read_file() expects exactly one argument (file path).");
-                    }
+            OptimizedBuiltinRegistry.RegisterOptimizedFunctions(this);
+        }
 
-                    string filePath = args[0]?.ToString() ?? "";
-
-                    try
-                    {
-                        if (!File.Exists(filePath))
-                        {
-                            var context = CreateErrorContextWithCallStack("read_file()");
-                            throw context.CreateRuntimeException($"File not found: {filePath}");
-                        }
-
-                        return File.ReadAllText(filePath);
-                    }
-                    catch (Exception ex) when (!(ex is RuntimeException))
-                    {
-                        throw new RuntimeException(
-                            $"Error reading file: {ex.Message}",
-                            _context.CurrentLocation.Line,
-                            _context.CurrentLocation.Column,
-                            _context.GetContextFragment(_context.CurrentLocation.Line),
-                            ex
-                        );
-                    }
-                }
-            ));
-
-            // Register built-in functions in the global scope
-            _context.SetCurrentScopeVariable("wait", new BuiltinFunction(
-                "wait",
-                (exec, args) =>
-                {
-                    if (args.Count != 1)
-                        throw new RuntimeException(
-                            "wait() expects exactly one argument (milliseconds).",
-                            _context.CurrentLocation.Line,
-                            _context.CurrentLocation.Column
-                        );
-
-                    int ms = Convert.ToInt32(args[0]);
-                    System.Threading.Thread.Sleep(ms);
-                    return null;
-                }
-            ));
-
-            _context.SetCurrentScopeVariable("instantiate", new BuiltinFunction(
-                "instantiate",
-                (exec, args) =>
-                {
-                    if (args.Count < 1 || args.Count > 2)
-                        throw new RuntimeException(
-                            "instantiate(typeName[, ctorArgs]) expects 1 or 2 args",
-                            exec.Context.CurrentLocation.Line,
-                            exec.Context.CurrentLocation.Column
-                        );
-
-                    string typeName = args[0]?.ToString() ?? "";
-                    Type? type = Type.GetType(typeName);
-
-                    // search loaded assemblies for the type
-                    if (type == null)
-                    {
-                        type = AppDomain
-                            .CurrentDomain.GetAssemblies()
-                            .Select(a => a.GetType(typeName))
-                            .FirstOrDefault(t => t != null);
-                    }
-
-                    // try loading the assembly based on namespace (before last dot)
-                    if (type == null && typeName.Contains("."))
-                    {
-                        var asmName = typeName.Substring(0, typeName.LastIndexOf('.'));
-                        try
-                        {
-                            var asm = Assembly.Load(asmName);
-                            type = asm.GetType(typeName);
-                        }
-                        catch
-                        { /* swallow load errors */
-                        }
-                    }
-
-                    if (type == null)
-                        throw new RuntimeException(
-                            $"Type to instantiate '{typeName}' not found",
-                            exec.Context.CurrentLocation.Line,
-                            exec.Context.CurrentLocation.Column
-                        );
-
-                    // handle ctor args
-                    object?[] ctorArgs = Array.Empty<object?>();
-                    if (args.Count == 2)
-                    {
-                        if (args[1] is List<object?> list)
-                            ctorArgs = list.ToArray();
-                        else
-                            throw new RuntimeException(
-                                "Second argument to `instantiate` must be an array",
-                                exec.Context.CurrentLocation.Line,
-                                exec.Context.CurrentLocation.Column
-                            );
-                    }
-
-                    // pick a ctor matching arg count
-                    var ctor =
-                        type.GetConstructors()
-                            .FirstOrDefault(c => c.GetParameters().Length == ctorArgs.Length)
-                        ?? throw new RuntimeException(
-                            $"No constructor on '{typeName}' with {ctorArgs.Length} args",
-                            exec.Context.CurrentLocation.Line,
-                            exec.Context.CurrentLocation.Column
-                        );
-
-                    // convert & invoke
-                    var pars = ctor.GetParameters();
-                    var converted = new object?[ctorArgs.Length];
-                    for (int i = 0; i < ctorArgs.Length; i++)
-                        converted[i] = Convert.ChangeType(ctorArgs[i], pars[i].ParameterType);
-
-                    return ctor.Invoke(converted);
-                }
-            ));
+        public void RegisterBuiltinFunction(string name, Callable function)
+        {
+            _context.SetCurrentScopeVariable(name, function);
         }
 
         public void PushEnvironment(Dictionary<string, object?> env)
@@ -2468,7 +2344,7 @@ namespace Shelltrac
         /// <summary>
         /// Creates a rich error context for the current execution state
         /// </summary>
-        private ShelltracErrorContext CreateErrorContext(int line = 0, int column = 0, string sourceSnippet = "")
+        public ShelltracErrorContext CreateErrorContext(int line = 0, int column = 0, string sourceSnippet = "")
         {
             var variables = new Dictionary<string, object?>();
             
@@ -2493,15 +2369,6 @@ namespace Shelltrac
                 sourceSnippet: !string.IsNullOrEmpty(sourceSnippet) ? sourceSnippet : GetSourceSnippet(line > 0 ? line : _context.CurrentLocation.Line),
                 variables: variables
             );
-        }
-
-        /// <summary>
-        /// Creates error context with call stack information
-        /// </summary>
-        private ShelltracErrorContext CreateErrorContextWithCallStack(string currentFunction, int line = 0, int column = 0, string sourceSnippet = "")
-        {
-            var context = CreateErrorContext(line, column, sourceSnippet);
-            return context.PushCallFrame(currentFunction);
         }
 
         /// <summary>
@@ -2595,25 +2462,6 @@ namespace Shelltrac
     public interface Callable
     {
         object? Call(Executor executor, List<object?> arguments);
-    }
-
-    public class BuiltinFunction : Callable
-    {
-        private readonly Func<Executor, List<object?>, object?> _func;
-        public string Name { get; }
-
-        public BuiltinFunction(string name, Func<Executor, List<object?>, object?> func)
-        {
-            Name = name;
-            _func = func;
-        }
-
-        public object? Call(Executor executor, List<object?> arguments)
-        {
-            return _func(executor, arguments);
-        }
-
-        public override string ToString() => $"[builtin fn {Name}]";
     }
 
     public class Function : Callable
