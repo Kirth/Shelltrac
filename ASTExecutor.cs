@@ -1239,6 +1239,23 @@ namespace Shelltrac
 
         private object? ExecuteShellCommand(string command, ParserConfig parser, int line, int column)
         {
+            // Use async version with default timeout for better performance and responsiveness
+            try
+            {
+                var defaultTimeout = TimeSpan.FromSeconds(30); // Default 30 second timeout
+                var task = ExecuteShellCommandAsync(command, parser, line, column, CancellationToken.None, defaultTimeout);
+                return task.GetAwaiter().GetResult();
+            }
+            catch (AggregateException ae) when (ae.InnerException != null)
+            {
+                // Unwrap AggregateException from GetAwaiter().GetResult()
+                throw ae.InnerException;
+            }
+        }
+
+        private async Task<object?> ExecuteShellCommandAsync(string command, ParserConfig parser, int line, int column, 
+            CancellationToken cancellationToken = default, TimeSpan? timeout = null)
+        {
             try
             {
                 // Set up the process
@@ -1251,53 +1268,86 @@ namespace Shelltrac
                     CreateNoWindow = true,
                 };
 
+                // Create combined cancellation token with timeout
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                if (timeout.HasValue) 
+                    cts.CancelAfter(timeout.Value);
+
                 var sw = Stopwatch.StartNew();
                 using var proc = Process.Start(psi)!;
                 int pid = proc.Id;
 
-                // Process the output incrementally based on the parser type
-                object? result = null;
-
-                if (parser is FormatParserConfig formatParser)
+                try
                 {
-                    // Format parsers need the entire output, so we'll collect it
-                    string stdout = proc.StandardOutput.ReadToEnd();
-                    result = HandleFormatParser(stdout, formatParser);
+                    // Process the output incrementally based on the parser type
+                    object? result = null;
+
+                    if (parser is FormatParserConfig formatParser)
+                    {
+                        // Format parsers need the entire output, so we'll collect it
+                        string stdout = await proc.StandardOutput.ReadToEndAsync();
+                        result = HandleFormatParser(stdout, formatParser);
+                    }
+                    else if (parser is FunctionParserConfig funcParser)
+                    {
+                        // Process line by line as they become available
+                        result = await HandleFunctionParserIncrementalAsync(proc.StandardOutput, funcParser, cts.Token);
+                    }
+                    else if (parser is ObjectParserConfig objParser)
+                    {
+                        // Process with accumulator
+                        result = await HandleObjectParserIncrementalAsync(proc.StandardOutput, objParser, cts.Token);
+                    }
+
+                    // Wait for the process to exit with cancellation support
+                    await proc.WaitForExitAsync(cts.Token);
+                    sw.Stop();
+
+                    string stderr = await proc.StandardError.ReadToEndAsync();
+                    stderr = stderr.TrimEnd();
+                    int exitCode = proc.ExitCode;
+                    long duration = sw.ElapsedMilliseconds;
+
+                    if (exitCode != 0 && !string.IsNullOrEmpty(stderr))
+                    {
+                        // Non-zero exit code with error output is a warning, not an error
+                        Console.WriteLine($"[SHELL WARNING] Command exited with code {exitCode}: {stderr}");
+                    }
+
+                    if (result == null)
+                    {
+                        string stdout = await proc.StandardOutput.ReadToEndAsync();
+                        stdout = stdout.TrimEnd();
+                        result = new ShellResult(stdout, stderr, exitCode, duration, pid);
+                    }
+
+                    return result;
                 }
-                else if (parser is FunctionParserConfig funcParser)
+                catch (OperationCanceledException) when (cts.Token.IsCancellationRequested)
                 {
-                    // Process line by line as they become available
-                    result = HandleFunctionParserIncremental(proc.StandardOutput, funcParser);
+                    // Kill the process if still running
+                    if (!proc.HasExited)
+                    {
+                        try
+                        {
+                            proc.Kill(entireProcessTree: true);
+                            await proc.WaitForExitAsync(CancellationToken.None);
+                        }
+                        catch (Exception killEx)
+                        {
+                            Console.WriteLine($"[SHELL WARNING] Failed to kill process {pid}: {killEx.Message}");
+                        }
+                    }
+
+                    if (timeout.HasValue && !cancellationToken.IsCancellationRequested)
+                    {
+                        throw new TimeoutException($"Shell command timed out after {timeout.Value.TotalSeconds} seconds: {command}");
+                    }
+                    
+                    throw; // Re-throw cancellation
                 }
-                else if (parser is ObjectParserConfig objParser)
-                {
-                    // Process with accumulator
-                    result = HandleObjectParserIncremental(proc.StandardOutput, objParser);
-                }
-
-                // Wait for the process to exit
-                proc.WaitForExit();
-                sw.Stop();
-
-                string stderr = proc.StandardError.ReadToEnd().TrimEnd();
-                int exitCode = proc.ExitCode;
-                long duration = sw.ElapsedMilliseconds;
-
-                if (exitCode != 0 && !string.IsNullOrEmpty(stderr))
-                {
-                    // Non-zero exit code with error output is a warning, not an error
-                    Console.WriteLine($"[SHELL WARNING] Command exited with code {exitCode}: {stderr}");
-                }
-
-                if (result == null)
-                {
-                    string stdout = proc.StandardOutput.ReadToEnd().TrimEnd();
-                    result = new ShellResult(stdout, stderr, exitCode, duration, pid);
-                }
-
-                return result;
             }
-            catch (Exception e)
+            catch (Exception e) when (!(e is OperationCanceledException || e is TimeoutException))
             {
                 string context = _context.GetContextFragment(line);
                 throw new ShellCommandException(e.Message, command, null, line, column, context, e);
@@ -1484,6 +1534,174 @@ namespace Shelltrac
             }
 
             // Call the complete function if provided
+            if (parser.Complete != null)
+            {
+                _context.PushScope();
+                try
+                {
+                    _context.SetCurrentScopeVariable(parser.Complete.Parameters[0], accumulator);
+                    try
+                    {
+                        var result = EvaluateBlockExpression(parser.Complete.Body);
+                        if (result != null)
+                        {
+                            accumulator = result;
+                        }
+                    }
+                    catch (ReturnException re)
+                    {
+                        if (re.Values.Count > 0)
+                        {
+                            accumulator = re.Values[0];
+                        }
+                    }
+                }
+                finally
+                {
+                    _context.PopScope();
+                }
+            }
+
+            return accumulator;
+        }
+
+        private async Task<string> HandleFunctionParserIncrementalAsync(StreamReader output, FunctionParserConfig parser, CancellationToken cancellationToken)
+        {
+            string result = "";
+            // Process output line by line as they become available
+            string? line;
+            while ((line = await output.ReadLineAsync()) != null)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                
+                // Call the line processor function for each line
+                _context.PushScope();
+                try
+                {
+                    _context.SetCurrentScopeVariable(parser.LineProcessor.Parameters[0], line);
+                    result += EvaluateBlockExpression(parser.LineProcessor.Body);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Error processing line: {ex.Message}");
+                }
+                finally
+                {
+                    _context.PopScope();
+                }
+            }
+
+            return result;
+        }
+
+        private async Task<object?> HandleObjectParserIncrementalAsync(StreamReader output, ObjectParserConfig parser, CancellationToken cancellationToken)
+        {
+            // Call the setup function to get initial accumulator
+            _context.PushScope();
+            object? accumulator;
+
+            try
+            {
+                // Setup: fn() { return initialValue; }
+                try
+                {
+                    accumulator = EvaluateBlockExpression(parser.Setup.Body);
+                }
+                catch (ReturnException re)
+                {
+                    // Handle explicit return from setup
+                    accumulator = re.Values.Count > 0 ? re.Values[0] : null;
+                }
+            }
+            finally
+            {
+                _context.PopScope();
+            }
+
+            // Process each line with the line processor as they become available
+            string? line;
+            bool continueProcessing = true;
+
+            while (continueProcessing && (line = await output.ReadLineAsync()) != null)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                
+                _context.PushScope();
+                try
+                {
+                    // Set up parameters for line processor: fn(line, acc) { ... }
+                    _context.SetCurrentScopeVariable(parser.LineProcessor.Parameters[0], line);
+                    _context.SetCurrentScopeVariable(parser.LineProcessor.Parameters[1], accumulator);
+
+                    // Execute the line processor and update accumulator
+                    try
+                    {
+                        var result = EvaluateBlockExpression(parser.LineProcessor.Body);
+                        if (result != null)
+                        {
+                            accumulator = result;
+                        }
+                    }
+                    catch (ReturnException re)
+                    {
+                        // Handle explicit return
+                        if (re.Values.Count > 0)
+                        {
+                            accumulator = re.Values[0];
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // Error handling code remains unchanged
+                    if (parser.ErrorHandler != null)
+                    {
+                        _context.PushScope();
+                        try
+                        {
+                            _context.SetCurrentScopeVariable(parser.ErrorHandler.Parameters[0], ex);
+                            _context.SetCurrentScopeVariable(parser.ErrorHandler.Parameters[1], line);
+
+                            // If error handler returns false, abort processing
+                            bool shouldContinue = true;
+                            try
+                            {
+                                var result = EvaluateBlockExpression(parser.ErrorHandler.Body);
+                                if (result is bool b)
+                                {
+                                    shouldContinue = b;
+                                }
+                            }
+                            catch (ReturnException re)
+                            {
+                                if (re.Values.Count > 0 && re.Values[0] is bool b)
+                                {
+                                    shouldContinue = b;
+                                }
+                            }
+
+                            if (!shouldContinue)
+                            {
+                                continueProcessing = false;
+                            }
+                        }
+                        finally
+                        {
+                            _context.PopScope();
+                        }
+                    }
+                    else
+                    {
+                        Console.WriteLine($"Error processing line: {ex.Message}");
+                    }
+                }
+                finally
+                {
+                    _context.PopScope();
+                }
+            }
+
+            // Call the complete function if specified
             if (parser.Complete != null)
             {
                 _context.PushScope();
