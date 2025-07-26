@@ -18,23 +18,23 @@ namespace Shelltrac
         void Visit(LoopYieldStmt stmt);
     }
 
-    public interface IExprVisitor
+    public interface IExprVisitor<T>
     {
-        EvalResult Visit(LiteralExpr expr);
-        EvalResult Visit(InterpolatedStringExpr expr);
-        EvalResult Visit(VarExpr expr);
-        EvalResult Visit(CallExpr expr);
-        EvalResult Visit(BinaryExpr expr);
-        EvalResult Visit(IfExpr expr);
-        EvalResult Visit(ForExpr expr);
-        EvalResult Visit(ParallelForExpr expr);
-        EvalResult Visit(LambdaExpr expr);
-        EvalResult Visit(ShellExpr expr);
-        EvalResult Visit(SshExpr expr);
-        EvalResult Visit(MemberAccessExpr expr);
-        EvalResult Visit(RangeExpr expr);
-        EvalResult Visit(ArrayExpr expr);
-        EvalResult Visit(IndexExpr expr);
-        EvalResult Visit(DictExpr expr);
+        T Visit(LiteralExpr expr);
+        T Visit(InterpolatedStringExpr expr);
+        T Visit(VarExpr expr);
+        T Visit(CallExpr expr);
+        T Visit(BinaryExpr expr);
+        T Visit(IfExpr expr);
+        T Visit(ForExpr expr);
+        T Visit(ParallelForExpr expr);
+        T Visit(LambdaExpr expr);
+        T Visit(ShellExpr expr);
+        T Visit(SshExpr expr);
+        T Visit(MemberAccessExpr expr);
+        T Visit(RangeExpr expr);
+        T Visit(ArrayExpr expr);
+        T Visit(IndexExpr expr);
+        T Visit(DictExpr expr);
     }
 }
