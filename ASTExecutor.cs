@@ -203,7 +203,7 @@ namespace Shelltrac
         }
     }
 
-    public class Executor : IStmtVisitor, IExprVisitor<object?>
+    public class Executor : IStmtVisitor, IExprVisitor
     {
         private readonly Dictionary<string, List<EventHandler>> _eventHandlers = new();
         private readonly ExecutionContext _context;
@@ -844,7 +844,14 @@ namespace Shelltrac
                 _context.PushLocation(expr);
 
                 // Use visitor pattern to dispatch expression evaluation
-                return expr.Accept(this);
+                var result = expr.Accept(this);
+                return result switch
+                {
+                    ValueResult vr => vr.Value,
+                    ReturnSignal rs => throw new ReturnException(rs.ReturnValue),
+                    YieldSignal ys => throw new YieldException(ys.Value, ys.IsEmit, ys.IsCancel, ys.IsOverride),
+                    _ => null
+                };
             }
             catch (ShelltracException)
             {
@@ -1813,28 +1820,37 @@ namespace Shelltrac
 
         #region Expression Visitor Methods
 
-        public object? Visit(LiteralExpr expr)
+        public EvalResult Visit(LiteralExpr expr)
         {
-            return expr.Value;
+            return new ValueResult(expr.Value);
         }
 
-        public object? Visit(InterpolatedStringExpr expr)
+        public EvalResult Visit(InterpolatedStringExpr expr)
         {
             var sb = new StringBuilder();
             foreach (var part in expr.Parts)
             {
-                object? value = Eval(part);
-                sb.Append(value?.ToString() ?? "");
+                var result = Eval(part);
+                switch (result)
+                {
+                    case ReturnSignal rs:
+                        return rs;
+                    case YieldSignal ys:
+                        return ys;
+                    case ValueResult vr:
+                        sb.Append(vr.Value?.ToString() ?? "");
+                        break;
+                }
             }
-            return sb.ToString();
+            return new ValueResult(sb.ToString());
         }
 
-        public object? Visit(VarExpr expr)
+        public EvalResult Visit(VarExpr expr)
         {
-            return _context.LookupVariable(expr.Name);
+            return new ValueResult(_context.LookupVariable(expr.Name));
         }
 
-        public object? Visit(CallExpr expr)
+        public EvalResult Visit(CallExpr expr)
         {
             object? callee = Eval(expr.Callee);
             if (callee is Callable callable)
@@ -1842,7 +1858,7 @@ namespace Shelltrac
                 List<object?> args = new();
                 foreach (var arg in expr.Arguments)
                     args.Add(Eval(arg));
-                return callable.Call(this, args);
+                return new ValueResult(callable.Call(this, args));
             }
             throw new RuntimeException(
                 $"Attempted to call a non-function '{callee}'",
@@ -1851,24 +1867,24 @@ namespace Shelltrac
             );
         }
 
-        public object? Visit(BinaryExpr expr)
+        public EvalResult Visit(BinaryExpr expr)
         {
-            return EvalBinary(expr);
+            return new ValueResult(EvalBinary(expr));
         }
 
-        public object? Visit(IfExpr expr)
+        public EvalResult Visit(IfExpr expr)
         {
             var condVal = Eval(expr.Condition)!;
             bool condition = ConvertToBool(condVal);
             if (condition)
-                return EvaluateBlockExpression(expr.ThenBlock);
+                return new ValueResult(EvaluateBlockExpression(expr.ThenBlock));
             else if (expr.ElseBlock != null)
-                return EvaluateBlockExpression(expr.ElseBlock);
+                return new ValueResult(EvaluateBlockExpression(expr.ElseBlock));
             else
-                return null;
+                return new ValueResult(null);
         }
 
-        public object? Visit(ForExpr expr)
+        public EvalResult Visit(ForExpr expr)
         {
             var iterable = Eval(expr.Iterable);
             if (!(iterable is IEnumerable en))
@@ -1894,15 +1910,15 @@ namespace Shelltrac
                     _context.PopScope();
                 }
             }
-            return results;
+            return new ValueResult(results);
         }
 
-        public object? Visit(ParallelForExpr expr)
+        public EvalResult Visit(ParallelForExpr expr)
         {
-            return EvalParallelFor(expr);
+            return new ValueResult(EvalParallelFor(expr));
         }
 
-        public object? Visit(LambdaExpr expr)
+        public EvalResult Visit(LambdaExpr expr)
         {
             // capture current variables
             var closure = _context.GetAllVariables();
@@ -1913,10 +1929,10 @@ namespace Shelltrac
                 Column = expr.Column,
             };
 
-            return new Function(lambdaDecl, closure);
+            return new ValueResult(new Function(lambdaDecl, closure));
         }
 
-        public object? Visit(ShellExpr expr)
+        public EvalResult Visit(ShellExpr expr)
         {
             object cmdObj = Eval(expr.Argument)!;
             string command;
@@ -1932,38 +1948,38 @@ namespace Shelltrac
                 command = cmdObj?.ToString() ?? "";
             }
 
-            return ExecuteShellCommand(command, expr.Parser, expr.Line, expr.Column);
+            return new ValueResult(ExecuteShellCommand(command, expr.Parser, expr.Line, expr.Column));
         }
 
-        public object? Visit(SshExpr expr)
+        public EvalResult Visit(SshExpr expr)
         {
-            return ExecuteSshCommand(expr);
+            return new ValueResult(ExecuteSshCommand(expr));
         }
 
-        public object? Visit(MemberAccessExpr expr)
+        public EvalResult Visit(MemberAccessExpr expr)
         {
             object parent = Eval(expr.Object)!;
-            return BindMember(parent, expr.MemberName);
+            return new ValueResult(BindMember(parent, expr.MemberName));
         }
 
-        public object? Visit(RangeExpr expr)
+        public EvalResult Visit(RangeExpr expr)
         {
             object leftVal = Eval(expr.Start)!;
             object rightVal = Eval(expr.End)!;
             int start = ConvertToInt(leftVal)!;
             int end = ConvertToInt(rightVal)!;
-            return new Range(start, end);
+            return new ValueResult(new Range(start, end));
         }
 
-        public object? Visit(ArrayExpr expr)
+        public EvalResult Visit(ArrayExpr expr)
         {
             var list = new List<object?>();
             foreach (var element in expr.Elements)
                 list.Add(Eval(element));
-            return list;
+            return new ValueResult(list);
         }
 
-        public object? Visit(IndexExpr expr)
+        public EvalResult Visit(IndexExpr expr)
         {
             object target = Eval(expr.Target)!;
             object indexValue = Eval(expr.Index)!;
@@ -1977,7 +1993,7 @@ namespace Shelltrac
                         expr.Line,
                         expr.Column
                     );
-                return tlist[i];
+                return new ValueResult(tlist[i]);
             }
             else if (target is IDictionary<string, object> tdict)
             {
@@ -1988,7 +2004,7 @@ namespace Shelltrac
                         expr.Line,
                         expr.Column
                     );
-                return tdict[key];
+                return new ValueResult(tdict[key]);
             }
             else
             {
@@ -2000,7 +2016,7 @@ namespace Shelltrac
             }
         }
 
-        public object? Visit(DictExpr expr)
+        public EvalResult Visit(DictExpr expr)
         {
             var map = new Dictionary<string, object?>();
             foreach (var (keyExpr, valueExpr) in expr.Pairs)
@@ -2016,10 +2032,43 @@ namespace Shelltrac
                 string key = keyObj.ToString()!;
                 map[key] = Eval(valueExpr);
             }
-            return map;
+            return new ValueResult(map);
         }
 
         #endregion
+    }
+
+    // EvalResult types for control flow without exceptions
+    public abstract class EvalResult { }
+
+    public class ValueResult : EvalResult 
+    { 
+        public object? Value { get; }
+        
+        public ValueResult(object? value) => Value = value;
+    }
+
+    public class ReturnSignal : EvalResult 
+    { 
+        public object? ReturnValue { get; }
+        
+        public ReturnSignal(object? returnValue) => ReturnValue = returnValue;
+    }
+
+    public class YieldSignal : EvalResult 
+    { 
+        public object? Value { get; }
+        public bool IsEmit { get; }
+        public bool IsCancel { get; }
+        public bool IsOverride { get; }
+        
+        public YieldSignal(object? value, bool isEmit, bool isCancel, bool isOverride)
+        {
+            Value = value;
+            IsEmit = isEmit;
+            IsCancel = isCancel;
+            IsOverride = isOverride;
+        }
     }
 
     public class ReturnException : Exception
