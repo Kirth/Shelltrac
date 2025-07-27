@@ -68,9 +68,12 @@ namespace Shelltrac.Benchmarks
                 case "basic":
                     SimpleBenchmarks.RunAll();
                     break;
+                case "compare":
+                    BenchmarkComparer.CompareBenchmarks();
+                    break;
                 default:
                     Console.WriteLine($"Unknown test: {testName}");
-                    Console.WriteLine("Available tests: smoke, basic, all");
+                    Console.WriteLine("Available tests: smoke, basic, all, compare");
                     break;
             }
         }
