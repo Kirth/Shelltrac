@@ -102,8 +102,7 @@ namespace Shelltrac
             string functionName = nameToken.Lexeme;
 
             Consume(TokenType.LPAREN, "Expected '(' after function name");
-            using var pooledParameters = ShelltracPools.GetStringList();
-            var parameters = pooledParameters.Value;
+            List<string> parameters = new();
             if (!Check(TokenType.RPAREN))
             {
                 do
@@ -115,13 +114,13 @@ namespace Shelltrac
             Consume(TokenType.RPAREN, "Expected ')' after parameter list"); // Adjust token types if you introduce LPAREN/RPAREN.
 
             var body = ParseBlock();
-            return new FunctionStmt(functionName, new List<string>(parameters), body);
+            return new FunctionStmt(functionName, parameters, body);
         }
 
         private Stmt ParseReturn()
         {
-            using var pooledValues = ShelltracPools.GetExpressionList();
-            var values = pooledValues.Value;
+            List<Expr> values = new List<Expr>();
+
             if (!Check(TokenType.SEMICOLON))
             {
                 // Parse first expression
@@ -135,7 +134,7 @@ namespace Shelltrac
             }
 
             Match(TokenType.SEMICOLON); // Optional semicolon
-            return new ReturnStmt(new List<Expr>(values));
+            return new ReturnStmt(values);
         }
 
         private Stmt ParseReturnOrLoopYield(bool inParallelLoop)
@@ -212,8 +211,7 @@ namespace Shelltrac
         private Expr ParseArray()
         {
             // Consume '[' token
-            using var pooledElements = ShelltracPools.GetExpressionList();
-            var elements = pooledElements.Value;
+            var elements = new List<Expr>();
             if (!Check(TokenType.RBRACKET))
             {
                 do
@@ -222,7 +220,7 @@ namespace Shelltrac
                 } while (Match(TokenType.COMMA));
             }
             Consume(TokenType.RBRACKET, "Expected ']' after array elements");
-            return new ArrayExpr(new List<Expr>(elements));
+            return new ArrayExpr(elements);
         }
 
         private Expr ParseDictionary()
@@ -247,8 +245,7 @@ namespace Shelltrac
         private Stmt ParseEvent()
         {
             var eventName = Consume(TokenType.IDENTIFIER, "Expected event name").Lexeme;
-            using var pooledParameters = ShelltracPools.GetStringList();
-            var parameters = pooledParameters.Value;
+            List<string> parameters = new List<string>();
             if (Match(TokenType.LPAREN))
             {
                 if (!Check(TokenType.RPAREN))
@@ -265,14 +262,13 @@ namespace Shelltrac
             Consume(TokenType.ARROW, "Expected '=>' after event name");
             Consume(TokenType.DO, "Expected 'do'");
             var body = ParseBlock();
-            return new EventStmt(eventName, new List<string>(parameters), body);
+            return new EventStmt(eventName, parameters, body);
         }
 
         private Stmt ParseTrigger()
         {
             var ev = Consume(TokenType.IDENTIFIER, "Expected event name after 'trigger'");
-            using var pooledArgs = ShelltracPools.GetExpressionList();
-            var args = pooledArgs.Value;
+            List<Expr> args = new List<Expr>();
             if (Match(TokenType.LPAREN))
             {
                 if (!Check(TokenType.RPAREN))
@@ -284,7 +280,7 @@ namespace Shelltrac
                 }
                 Consume(TokenType.RPAREN, "Expected ')' after event arguments");
             }
-            return new TriggerStmt(ev.Lexeme, new List<Expr>(args));
+            return new TriggerStmt(ev.Lexeme, args);
         }
 
         private Stmt ParseInvocation()
@@ -380,8 +376,7 @@ namespace Shelltrac
 
         private Expr ParseShellWithInterpolation(string shellContent, int line)
         {
-            using var pooledParts = ShelltracPools.GetExpressionList();
-            var parts = pooledParts.Value;
+            List<Expr> parts = new List<Expr>();
             int pos = 0;
 
             while (pos < shellContent.Length)
@@ -459,7 +454,7 @@ namespace Shelltrac
             }
 
             // Otherwise, create an interpolated string expression
-            return new InterpolatedStringExpr(new List<Expr>(parts)) { Line = line };
+            return new InterpolatedStringExpr(parts) { Line = line };
         }
 
         private bool IsValidIdentifier(string text)
@@ -508,8 +503,7 @@ namespace Shelltrac
             if (Previous().Type != TokenType.LET)
                 Consume(TokenType.LET, "Expected 'let' before variable destructuring");
 
-            using var pooledVarNames = ShelltracPools.GetStringList();
-            var varNames = pooledVarNames.Value;
+            List<string> varNames = new List<string>();
 
             // Parse first variable name
             varNames.Add(Consume(TokenType.IDENTIFIER, "Expected variable name").Lexeme);
@@ -538,7 +532,7 @@ namespace Shelltrac
             Consume(TokenType.EQUAL, "Expected '=' after variable names");
             var expr = ParseExpression();
 
-            return new DestructuringAssignStmt(new List<string>(varNames), expr);
+            return new DestructuringAssignStmt(varNames, expr);
         }
 
         private Expr ParseAssignable()
@@ -677,8 +671,7 @@ namespace Shelltrac
         private List<Stmt> ParseBlock()
         {
             Consume(TokenType.LBRACE, "Expected '{'");
-            using var pooledStatements = ShelltracPools.GetStatementList();
-            var statements = pooledStatements.Value;
+            var statements = new List<Stmt>();
             while (!Check(TokenType.RBRACE) && !IsAtEnd())
             {
                 var stmt = ParseStatement();
@@ -686,7 +679,7 @@ namespace Shelltrac
                     statements.Add(stmt);
             }
             Consume(TokenType.RBRACE, "Expected '}' after block");
-            return new List<Stmt>(statements);
+            return statements;
         }
 
         // ---------- Expression parsing for < and + ----------
@@ -835,8 +828,7 @@ namespace Shelltrac
                 // Check for a function call (i.e. '(' following identifier).
                 if (Match(TokenType.LPAREN)) // ideally use LPAREN instead of LBRACKET if available
                 {
-                    using var pooledArguments = ShelltracPools.GetExpressionList();
-                    var arguments = pooledArguments.Value;
+                    var arguments = new List<Expr>();
                     if (!Check(TokenType.RPAREN))
                     {
                         do
@@ -845,7 +837,7 @@ namespace Shelltrac
                         } while (Match(TokenType.COMMA));
                     }
                     Consume(TokenType.RPAREN, "Expected ')' after arguments"); // change token if needed
-                    expr = new CallExpr(expr, new List<Expr>(arguments));
+                    expr = new CallExpr(expr, arguments);
                 }
                 return expr;
             }
@@ -1013,9 +1005,10 @@ namespace Shelltrac
         private Expr ParseArrowLambda()
         {
             // 1. params
-            using var pooledParameters = ShelltracPools.GetStringList();
-            var parameters = pooledParameters.Value;
-            parameters.Add(Consume(TokenType.IDENTIFIER, "Expected parameter name").Lexeme);
+            var parameters = new List<string>
+            {
+                Consume(TokenType.IDENTIFIER, "Expected parameter name").Lexeme,
+            };
 
             // 2. arrow
             Consume(TokenType.ARROW, "Expected '->' after parameter");
@@ -1039,13 +1032,10 @@ namespace Shelltrac
             if (exprBody != null)
             {
                 // wrap it into a ReturnStmt so runtime sees it as the last value
-                using var pooledExprList = ShelltracPools.GetExpressionList();
-                var exprList = pooledExprList.Value;
-                exprList.Add(exprBody);
-                var retStmt = new ReturnStmt(new List<Expr>(exprList));
+                var retStmt = new ReturnStmt(new List<Expr> { exprBody });
                 stmts = new List<Stmt> { retStmt };
             }
-            return new LambdaExpr(new List<string>(parameters), stmts!)
+            return new LambdaExpr(parameters, stmts!)
             {
                 Line = Previous().Line,
                 Column = Previous().Column,
@@ -1055,8 +1045,7 @@ namespace Shelltrac
         private Expr ParseArrowLambdaMulti()
         {
             // already saw '('
-            using var pooledParameters = ShelltracPools.GetStringList();
-            var parameters = pooledParameters.Value;
+            var parameters = new List<string>();
             if (!Check(TokenType.RPAREN))
             {
                 do
@@ -1075,14 +1064,9 @@ namespace Shelltrac
                 expr = ParseExpression();
 
             if (expr != null)
-            {
-                using var pooledExprList = ShelltracPools.GetExpressionList();
-                var exprList = pooledExprList.Value;
-                exprList.Add(expr);
-                stmts = new List<Stmt> { new ReturnStmt(new List<Expr>(exprList)) };
-            }
+                stmts = new List<Stmt> { new ReturnStmt(new List<Expr> { expr }) };
 
-            return new LambdaExpr(new List<string>(parameters), stmts!)
+            return new LambdaExpr(parameters, stmts!)
             {
                 Line = Previous().Line,
                 Column = Previous().Column,
@@ -1093,8 +1077,7 @@ namespace Shelltrac
         {
             // 'fn' already consumed
             Consume(TokenType.LPAREN, "Expected '(' after 'fn' in lambda");
-            using var pooledParameters = ShelltracPools.GetStringList();
-            var parameters = pooledParameters.Value;
+            var parameters = new List<string>();
             if (!Check(TokenType.RPAREN))
             {
                 do
@@ -1106,7 +1089,7 @@ namespace Shelltrac
             Consume(TokenType.RPAREN, "Expected ')' after lambda parameters");
 
             var body = ParseBlock();
-            return new LambdaExpr(new List<string>(parameters), body)
+            return new LambdaExpr(parameters, body)
             {
                 Line = Previous().Line,
                 Column = Previous().Column,
@@ -1115,8 +1098,7 @@ namespace Shelltrac
 
         private Expr ParseInterpolatedString()
         {
-            using var pooledParts = ShelltracPools.GetExpressionList();
-            var parts = pooledParts.Value;
+            List<Expr> parts = new List<Expr>();
 
             while (!Check(TokenType.INTERPOLATED_STRING) && !IsAtEnd())
             {
@@ -1140,7 +1122,7 @@ namespace Shelltrac
                 return parts[0];
             }
 
-            return new InterpolatedStringExpr(new List<Expr>(parts));
+            return new InterpolatedStringExpr(parts);
         }
 
         private Expr ParsePostfix(Expr expr)
@@ -1160,8 +1142,7 @@ namespace Shelltrac
                     // If the next token is an LPAREN, then we are making a method call.
                     if (Match(TokenType.LPAREN))
                     {
-                        using var pooledArguments = ShelltracPools.GetExpressionList();
-                        var arguments = pooledArguments.Value;
+                        var arguments = new List<Expr>();
                         if (!Check(TokenType.RPAREN))
                         {
                             do
@@ -1170,14 +1151,13 @@ namespace Shelltrac
                             } while (Match(TokenType.COMMA));
                         }
                         Consume(TokenType.RPAREN, "Expected ')' after method call arguments");
-                        expr = new CallExpr(expr, new List<Expr>(arguments));
+                        expr = new CallExpr(expr, arguments);
                     }
                 }
                 else if (Match(TokenType.LPAREN))
                 {
                     // In case a call immediately follows (without a preceding dot) – e.g. when calling a function literal.
-                    using var pooledArguments = ShelltracPools.GetExpressionList();
-                    var arguments = pooledArguments.Value;
+                    var arguments = new List<Expr>();
                     if (!Check(TokenType.RPAREN))
                     {
                         do
@@ -1186,7 +1166,7 @@ namespace Shelltrac
                         } while (Match(TokenType.COMMA));
                     }
                     Consume(TokenType.RPAREN, "Expected ')' after arguments");
-                    expr = new CallExpr(expr, new List<Expr>(arguments));
+                    expr = new CallExpr(expr, arguments);
                 }
                 else if (Match(TokenType.LBRACKET))
                 {
@@ -1220,8 +1200,7 @@ namespace Shelltrac
         {
             // '{' already consumed
             int braceCount = 1;
-            using var pooledSb = ShelltracPools.GetStringBuilder();
-            var sb = pooledSb.Value;
+            StringBuilder sb = new StringBuilder();
             while (!IsAtEnd() && braceCount > 0)
             {
                 Token token = Advance();

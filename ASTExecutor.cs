@@ -451,8 +451,7 @@ namespace Shelltrac
                         );
 
                     // Evaluate each argument
-                    using var pooledArgs = ShelltracPools.GetObjectList();
-                    var evaluatedArgs = pooledArgs.Value;
+                    List<object?> evaluatedArgs = new List<object?>();
                     foreach (var argExpr in trigger.Arguments)
                         evaluatedArgs.Add(Eval(argExpr));
 
@@ -726,13 +725,12 @@ namespace Shelltrac
 
         public void Visit(ReturnStmt stmt)
         {
-            using var pooledValues = ShelltracPools.GetObjectList();
-            var returnValues = pooledValues.Value;
+            List<object?> returnValues = new List<object?>();
             foreach (var valueExpr in stmt.Values)
             {
                 returnValues.Add(Eval(valueExpr));
             }
-            throw new ReturnException(new List<object?>(returnValues));
+            throw new ReturnException(returnValues);
         }
 
         public void Visit(TriggerStmt stmt)
@@ -850,8 +848,7 @@ namespace Shelltrac
                     pf.Column
                 );
 
-            using var pooledItems = ShelltracPools.GetObjectList();
-            var items = pooledItems.Value;
+            var items = new List<object>();
             foreach (var item in en)
                 items.Add(item);
 
@@ -864,7 +861,7 @@ namespace Shelltrac
             var tasks = items
                 .Select(item =>
                     Task.Run(
-                        async () =>
+                        () =>
                         {
                             // Use shared executor with isolated immutable state
                             var capturedEnvironment = _context.GetAllVariables();
@@ -1305,31 +1302,27 @@ namespace Shelltrac
                     return output.ParseJson();
 
                 case "csv":
+                    // Simple CSV parsing logic
+                    var lines = output.Split('\n').Where(line => !string.IsNullOrWhiteSpace(line)).ToList();
+                    if (lines.Count == 0) return new List<Dictionary<string, string>>();
+
+                    var headers = lines[0].Split(',').Select(h => h.Trim()).ToList();
+                    var results = new List<Dictionary<string, string>>();
+
+                    for (int i = 1; i < lines.Count; i++)
                     {
-                        // Simple CSV parsing logic
-                        var lines = output.Split('\n').Where(line => !string.IsNullOrWhiteSpace(line)).ToList();
-                        if (lines.Count == 0) return new List<Dictionary<string, string>>();
+                        var values = lines[i].Split(',').Select(v => v.Trim()).ToList();
+                        var row = new Dictionary<string, string>();
 
-                        var headers = lines[0].Split(',').Select(h => h.Trim()).ToList();
-                        using var pooledResults = ShelltracPools.GetListDictStringString();
-                        var results = pooledResults.Value;
-
-                        for (int i = 1; i < lines.Count; i++)
+                        for (int j = 0; j < Math.Min(headers.Count, values.Count); j++)
                         {
-                            var values = lines[i].Split(',').Select(v => v.Trim()).ToList();
-                            using var pooledRow = ShelltracPools.GetDictionaryStringString();
-                            var row = pooledRow.Value;
-
-                            for (int j = 0; j < Math.Min(headers.Count, values.Count); j++)
-                            {
-                                row[headers[j]] = values[j];
-                            }
-
-                            results.Add(new Dictionary<string, string>(row));
+                            row[headers[j]] = values[j];
                         }
 
-                        return new List<Dictionary<string, string>>(results);
+                        results.Add(row);
                     }
+
+                    return results;
 
                 default:
                     throw new RuntimeException(

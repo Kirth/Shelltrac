@@ -21,17 +21,16 @@ namespace Shelltrac
             var regex = new Regex(pattern);
             var match = regex.Match(input);
 
-            using var pooledGroupValues = ShelltracPools.GetStringList();
-            var groupValues = pooledGroupValues.Value;
+            var groupValues = new List<string>();
             if (!match.Success)
-                return new List<string>();
+                return groupValues;
 
             for (int i = 1; i < match.Groups.Count; i++)
             {
                 groupValues.Add(match.Groups[i].Value);
             }
 
-            return new List<string>(groupValues);
+            return groupValues;
         }
 
         // Extract all matches of a pattern
@@ -41,14 +40,13 @@ namespace Shelltrac
             var regex = new Regex(pattern);
             var matches = regex.Matches(input);
 
-            using var pooledMatchList = ShelltracPools.GetStringList();
-            var matchList = pooledMatchList.Value;
+            var matchList = new List<string>();
             foreach (Match match in matches)
             {
                 matchList.Add(match.Value);
             }
 
-            return new List<string>(matchList);
+            return matchList;
         }
 
         // Extract captures from named groups
@@ -58,10 +56,9 @@ namespace Shelltrac
             var regex = new Regex(pattern);
             var match = regex.Match(input);
 
-            using var pooledCaptures = ShelltracPools.GetDictionaryStringString();
-            var captures = pooledCaptures.Value;
+            var captures = new Dictionary<string, string>();
             if (!match.Success)
-                return new Dictionary<string, string>();
+                return captures;
 
             foreach (Group group in match.Groups)
             {
@@ -71,7 +68,7 @@ namespace Shelltrac
                 }
             }
 
-            return new Dictionary<string, string>(captures);
+            return captures;
         }
 
         // Replace matches with a replacement string

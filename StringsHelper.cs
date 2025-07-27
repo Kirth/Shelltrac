@@ -15,9 +15,8 @@ namespace Shelltrac
         {
             try
             {
-                // Create the result dictionary from the pool
-                using var pooledResult = ShelltracPools.GetDictionaryStringObject();
-                var result = pooledResult.Value;
+                // Create the result dictionary
+                var result = new Dictionary<string, object?>();
 
                 // Parse the JSON document
                 using (JsonDocument document = JsonDocument.Parse(json))
@@ -41,7 +40,7 @@ namespace Shelltrac
                     }
                 }
 
-                return new Dictionary<string, object?>(result);
+                return result;
             }
             catch (Exception ex)
             {
@@ -88,43 +87,38 @@ namespace Shelltrac
         /// </summary>
         private static void ProcessJsonArray(JsonElement element, Dictionary<string, object?> target)
         {
-            using var pooledItems = ShelltracPools.GetObjectList();
-            var items = pooledItems.Value;
+            int index = 0;
+            var items = new List<object?>();
 
             foreach (JsonElement item in element.EnumerateArray())
             {
                 items.Add(ConvertJsonElement(item));
+                index++;
             }
 
             // Store the actual list rather than numeric keys
-            target["items"] = new List<object?>(items);
+            target["items"] = items;
         }
 
         /// <summary>
-        // Convert a JsonElement to the appropriate .NET type
+        /// Convert a JsonElement to the appropriate .NET type
         /// </summary>
         private static object? ConvertJsonElement(JsonElement element)
         {
             switch (element.ValueKind)
             {
                 case JsonValueKind.Object:
-                    {
-                        using var pooledObjResult = ShelltracPools.GetDictionaryStringObject();
-                        var objResult = pooledObjResult.Value;
-                        ProcessJsonObject(element, objResult);
-                        return new Dictionary<string, object?>(objResult);
-                    }
+                    var objResult = new Dictionary<string, object?>();
+                    ProcessJsonObject(element, objResult);
+                    return objResult;
 
                 case JsonValueKind.Array:
+                    var arrayResult = new List<object?>();
+                    foreach (JsonElement item in element.EnumerateArray())
                     {
-                        using var pooledArrayResult = ShelltracPools.GetObjectList();
-                        var arrayResult = pooledArrayResult.Value;
-                        foreach (JsonElement item in element.EnumerateArray())
-                        {
-                            arrayResult.Add(ConvertJsonElement(item));
-                        }
-                        return new List<object?>(arrayResult);
+                        arrayResult.Add(ConvertJsonElement(item));
                     }
+                    return arrayResult;
 
                 case JsonValueKind.String:
                     return element.GetString();
