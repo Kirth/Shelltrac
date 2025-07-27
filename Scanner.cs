@@ -117,13 +117,64 @@ namespace Shelltrac
 
         public List<Token> ScanTokens()
         {
+#if PERF_TRACKING
+            var totalSw = System.Diagnostics.Stopwatch.StartNew();
+            var tokenCount = 0;
+            var stringTokens = 0;
+            var identifierTokens = 0;
+            var numberTokens = 0;
+            var stringSw = new System.Diagnostics.Stopwatch();
+            var identifierSw = new System.Diagnostics.Stopwatch();
+            var numberSw = new System.Diagnostics.Stopwatch();
+#endif
+            
             while (!IsAtEnd())
             {
                 _start = _current;
+#if PERF_TRACKING
+                char c = _source[_current];
+                
+                if (c == '"' || c == '@')
+                {
+                    stringSw.Start();
+                    ScanToken();
+                    stringSw.Stop();
+                    stringTokens++;
+                }
+                else if (IsDigit(c))
+                {
+                    numberSw.Start();
+                    ScanToken();
+                    numberSw.Stop();
+                    numberTokens++;
+                }
+                else if (IsAlpha(c))
+                {
+                    identifierSw.Start();
+                    ScanToken();
+                    identifierSw.Stop();
+                    identifierTokens++;
+                }
+                else
+                {
+                    ScanToken();
+                }
+                tokenCount++;
+#else
                 ScanToken();
+#endif
             }
             AddToken(TokenType.EOF, "<EOF>");
-            //_tokens.Add(new Token(TokenType.EOF, "", _line, _column, _start));
+            
+#if PERF_TRACKING
+            totalSw.Stop();
+            Console.WriteLine($"[PERF] Scanning breakdown - Total: {totalSw.ElapsedMilliseconds}ms");
+            Console.WriteLine($"[PERF]   Strings: {stringTokens} tokens, {stringSw.ElapsedMilliseconds}ms");
+            Console.WriteLine($"[PERF]   Identifiers: {identifierTokens} tokens, {identifierSw.ElapsedMilliseconds}ms");
+            Console.WriteLine($"[PERF]   Numbers: {numberTokens} tokens, {numberSw.ElapsedMilliseconds}ms");
+            Console.WriteLine($"[PERF]   Other: {tokenCount - stringTokens - identifierTokens - numberTokens} tokens");
+#endif
+            
             return _tokens;
         }
 
@@ -525,29 +576,60 @@ namespace Shelltrac
                 Advance();
             }
             
-            // Check for time suffixes: ms, s, m, h, d
+            // Fast path: check for time suffixes without string allocations
             if (!IsAtEnd() && IsAlpha(Peek()))
             {
                 int timeSuffixStart = _current;
-                while (!IsAtEnd() && IsAlpha(Peek()))
-                {
-                    Advance();
-                }
+                char firstSuffixChar = Peek();
                 
-                var suffixSpan = _source.AsSpan(timeSuffixStart, _current - timeSuffixStart);
-                string suffix = suffixSpan.ToString().ToLower();
-                
-                // Check if it's a valid time suffix
-                if (suffix == "ms" || suffix == "s" || suffix == "m" || suffix == "h" || suffix == "d")
+                // Quick check for common time suffixes without creating strings
+                if (firstSuffixChar == 'm' || firstSuffixChar == 's' || firstSuffixChar == 'h' || firstSuffixChar == 'd')
                 {
-                    // Extract the full time literal span
-                    var timeLiteralSpan = _source.AsSpan(startPos, _current - startPos);
-                    AddToken(TokenType.TIME_LITERAL, timeLiteralSpan.ToString());
-                    return;
+                    Advance(); // consume first suffix char
+                    
+                    bool isValidTimeSuffix = false;
+                    if (firstSuffixChar == 's' && IsAtEnd() || !IsAlpha(Peek()))
+                    {
+                        isValidTimeSuffix = true; // "s"
+                    }
+                    else if (firstSuffixChar == 'm')
+                    {
+                        if (Peek() == 's') // "ms"
+                        {
+                            Advance();
+                            isValidTimeSuffix = true;
+                        }
+                        else if (IsAtEnd() || !IsAlpha(Peek())) // "m"
+                        {
+                            isValidTimeSuffix = true;
+                        }
+                    }
+                    else if ((firstSuffixChar == 'h' || firstSuffixChar == 'd') && (IsAtEnd() || !IsAlpha(Peek())))
+                    {
+                        isValidTimeSuffix = true; // "h" or "d"
+                    }
+                    
+                    if (isValidTimeSuffix)
+                    {
+                        // Extract the full time literal span
+                        var timeLiteralSpan = _source.AsSpan(startPos, _current - startPos);
+                        AddToken(TokenType.TIME_LITERAL, timeLiteralSpan.ToString());
+                        return;
+                    }
+                    else
+                    {
+                        // Not a valid time suffix, rewind
+                        _current = timeSuffixStart;
+                    }
                 }
                 else
                 {
-                    // Not a time suffix, rewind and treat as separate tokens
+                    // Not a time suffix starting character, continue scanning identifier if needed
+                    while (!IsAtEnd() && IsAlpha(Peek()))
+                    {
+                        Advance();
+                    }
+                    // Rewind - this is not a time literal
                     _current = timeSuffixStart;
                 }
             }

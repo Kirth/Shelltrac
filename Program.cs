@@ -85,34 +85,41 @@ namespace Shelltrac
 
                     try
                     {
+                        var phaseStopwatch = Stopwatch.StartNew();
+                        
                         if (debugMode)
                             Console.WriteLine("DEBUG: Starting scanning phase");
 
                         var scanner = new DSLScanner(source);
                         var tokens = scanner.ScanTokens();
-
+                        
+                        phaseStopwatch.Stop();
                         if (debugMode)
                             Console.WriteLine(
-                                $"DEBUG: Scanning complete, found {tokens.Count} tokens"
+                                $"DEBUG: Scanning complete, found {tokens.Count} tokens in {phaseStopwatch.ElapsedMilliseconds}ms"
                             );
 
+                        phaseStopwatch.Restart();
                         if (debugMode)
                             Console.WriteLine("DEBUG: Starting parsing phase");
 
                         var parser = new DSLParser(tokens, source);
                         var programNode = parser.ParseProgram();
 
+                        phaseStopwatch.Stop();
                         if (debugMode)
-                            Console.WriteLine("DEBUG: Parsing complete");
+                            Console.WriteLine($"DEBUG: Parsing complete in {phaseStopwatch.ElapsedMilliseconds}ms");
 
+                        phaseStopwatch.Restart();
                         if (debugMode)
                             Console.WriteLine("DEBUG: Starting execution phase");
 
                         executor = new Executor(scriptPath, source);
                         executor.Execute(programNode);
 
+                        phaseStopwatch.Stop();
                         if (debugMode)
-                            Console.WriteLine("DEBUG: Execution complete");
+                            Console.WriteLine($"DEBUG: Execution complete in {phaseStopwatch.ElapsedMilliseconds}ms");
                     }
                     catch (ShelltracException ex)
                     {

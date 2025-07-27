@@ -19,13 +19,29 @@ namespace Shelltrac
 
         public ProgramNode ParseProgram()
         {
+#if PERF_TRACKING
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var stmtCount = 0;
+#endif
+            
             var program = new ProgramNode();
             while (!IsAtEnd())
             {
                 var stmt = ParseStatement();
                 if (stmt != null)
+                {
                     program.Statements.Add(stmt);
+#if PERF_TRACKING
+                    stmtCount++;
+#endif
+                }
             }
+            
+#if PERF_TRACKING
+            sw.Stop();
+            Console.WriteLine($"[PERF] Parsing {stmtCount} statements took {sw.ElapsedMilliseconds}ms");
+#endif
+            
             return program;
         }
 
@@ -34,11 +50,21 @@ namespace Shelltrac
             // first eat all the ; that may be left over from a previous line
             while (Match(TokenType.SEMICOLON)) { }
 
-            // Check for attributes (e.g., @cache)
+            // Check for attributes only before function declarations
             List<FunctionAttribute>? attributes = null;
             if (Check(TokenType.AT))
             {
                 attributes = ParseAttributes();
+                
+                // If the next token isn't 'fn', this is an error
+                if (!Check(TokenType.FN))
+                {
+                    throw new ParsingException(
+                        "Attributes can only be applied to function declarations",
+                        Peek().Line,
+                        Peek().Column
+                    );
+                }
             }
 
             if (Match(TokenType.TASK))
@@ -70,16 +96,6 @@ namespace Shelltrac
 
             if (Match(TokenType.FN))
                 return ParseFunction(attributes);
-            
-            // If we have attributes but no function, that's an error
-            if (attributes != null)
-            {
-                throw new ParsingException(
-                    "Attributes can only be applied to function declarations",
-                    Peek().Line,
-                    Peek().Column
-                );
-            }
             
             if (Match(TokenType.RETURN))
                 return ParseReturnOrLoopYield(this.inParallelLoop);

@@ -358,16 +358,31 @@ namespace Shelltrac
         /// <param name="program">The parsed program AST</param>
         public void Execute(ProgramNode program)
         {
+#if PERF_TRACKING
+            var executionSw = System.Diagnostics.Stopwatch.StartNew();
+            var stmtExecutionTimes = new List<(string, long)>();
+            var taskCount = 0;
+            var functionDefCount = 0;
+            var eventDefCount = 0;
+            var regularStmtCount = 0;
+#endif
+
             // Lists for once-tasks and fire-and-forget every-tasks
             var onceTasks = new List<Task>();
 
             // Process statements in order
             foreach (var stmt in program.Statements)
             {
+#if PERF_TRACKING
+                var stmtSw = System.Diagnostics.Stopwatch.StartNew();
+#endif
                 try
                 {
                     if (stmt is TaskStmt task)
                     {
+#if PERF_TRACKING
+                        taskCount++;
+#endif
                         if (task.IsOnce)
                         {
                             // Run once tasks in parallel
@@ -388,13 +403,26 @@ namespace Shelltrac
                     }
                     else if (stmt is EventStmt ev)
                     {
+#if PERF_TRACKING
+                        eventDefCount++;
+#endif
                         if (!_eventHandlers.ContainsKey(ev.EventName))
                             _eventHandlers[ev.EventName] = new List<EventHandler>();
 
                         _eventHandlers[ev.EventName].Add(new EventHandler(ev.Parameters, ev.Body));
                     }
+                    else if (stmt is FunctionStmt)
+                    {
+#if PERF_TRACKING
+                        functionDefCount++;
+#endif
+                        ExecuteStmt(stmt);
+                    }
                     else
                     {
+#if PERF_TRACKING
+                        regularStmtCount++;
+#endif
                         // For all other statements, execute them immediately
                         ExecuteStmt(stmt);
                     }
@@ -404,6 +432,13 @@ namespace Shelltrac
                     Console.Error.WriteLine($"[ERROR] {ex}");
                     // Continue execution despite errors in top-level statements
                 }
+#if PERF_TRACKING
+                finally
+                {
+                    stmtSw.Stop();
+                    stmtExecutionTimes.Add((stmt.GetType().Name, stmtSw.ElapsedMilliseconds));
+                }
+#endif
             }
 
             // Wait for all once-tasks to complete
@@ -426,6 +461,18 @@ namespace Shelltrac
                     }
                 }
             }
+
+#if PERF_TRACKING
+            executionSw.Stop();
+            Console.WriteLine($"[PERF] Execution breakdown - Total: {executionSw.ElapsedMilliseconds}ms");
+            Console.WriteLine($"[PERF]   Tasks: {taskCount}, Functions: {functionDefCount}, Events: {eventDefCount}, Regular: {regularStmtCount}");
+            
+            var slowStatements = stmtExecutionTimes.Where(x => x.Item2 > 1).OrderByDescending(x => x.Item2).Take(5);
+            foreach (var (stmtType, time) in slowStatements)
+            {
+                Console.WriteLine($"[PERF]   Slow stmt: {stmtType} took {time}ms");
+            }
+#endif
         }
 
         /// <summary>
@@ -546,9 +593,19 @@ namespace Shelltrac
 
         private void HandleInvocation(InvocationStmt inv)
         {
+#if PERF_TRACKING
+            var invSw = System.Diagnostics.Stopwatch.StartNew();
+            var evalSw = System.Diagnostics.Stopwatch.StartNew();
+#endif
+            
             // Evaluate the argument expression
             object val = Eval(inv.Argument)!;
-
+#if PERF_TRACKING
+            evalSw.Stop();
+            
+            var execSw = System.Diagnostics.Stopwatch.StartNew();
+#endif
+            
             switch (inv.CommandKeyword)
             {
                 case "log":
@@ -580,6 +637,15 @@ namespace Shelltrac
                     ExecuteShellCommand(command, null, inv.Line, inv.Column);
                     break;
             }
+#if PERF_TRACKING
+            execSw.Stop();
+            invSw.Stop();
+            
+            if (invSw.ElapsedMilliseconds > 10)
+            {
+                Console.WriteLine($"[PERF] Slow invocation '{inv.CommandKeyword}': total={invSw.ElapsedMilliseconds}ms (eval={evalSw.ElapsedMilliseconds}ms, exec={execSw.ElapsedMilliseconds}ms)");
+            }
+#endif
         }
 
         private void HandleIndexAssign(IndexAssignStmt stmt)
@@ -1082,6 +1148,22 @@ namespace Shelltrac
                     _context.CurrentLocation.Line,
                     _context.CurrentLocation.Column
                 );
+
+            // Fast path optimizations for common types to avoid reflection overhead
+            if (parent is TimeLiteralExpr timeLiteral)
+            {
+                return memberName.ToLowerInvariant() switch
+                {
+                    "totalmilliseconds" => timeLiteral.TotalMilliseconds,
+                    "value" => timeLiteral.Value,
+                    "unit" => timeLiteral.Unit,
+                    _ => throw new RuntimeException(
+                        $"Member '{memberName}' not found on TimeLiteralExpr",
+                        _context.CurrentLocation.Line,
+                        _context.CurrentLocation.Column
+                    )
+                };
+            }
 
             var type = parent.GetType();
             var key = (type, memberName);
@@ -2323,8 +2405,28 @@ namespace Shelltrac
 
         public object? Visit(MemberAccessExpr expr)
         {
+#if PERF_TRACKING
+            var memberSw = System.Diagnostics.Stopwatch.StartNew();
+            var evalSw = System.Diagnostics.Stopwatch.StartNew();
+#endif
             object parent = Eval(expr.Object)!;
-            return BindMember(parent, expr.MemberName);
+#if PERF_TRACKING
+            evalSw.Stop();
+            
+            var bindSw = System.Diagnostics.Stopwatch.StartNew();
+#endif
+            var result = BindMember(parent, expr.MemberName);
+#if PERF_TRACKING
+            bindSw.Stop();
+            memberSw.Stop();
+            
+            if (memberSw.ElapsedMilliseconds > 5)
+            {
+                Console.WriteLine($"[PERF] Slow member access '{parent?.GetType().Name}.{expr.MemberName}': total={memberSw.ElapsedMilliseconds}ms (eval={evalSw.ElapsedMilliseconds}ms, bind={bindSw.ElapsedMilliseconds}ms)");
+            }
+#endif
+            
+            return result;
         }
 
         public object? Visit(RangeExpr expr)
@@ -2538,42 +2640,52 @@ namespace Shelltrac
     {
         public FunctionStmt Declaration { get; }
         public ImmutableDictionary<string, object?> Closure { get; } // capture environment if needed
+        
+        // Cache attribute analysis to avoid checking on every call
+        private readonly bool _isCached;
+        private readonly long _cacheTtlMilliseconds;
 
         public Function(FunctionStmt declaration, ImmutableDictionary<string, object?> closure)
         {
             Declaration = declaration;
             Closure = closure;
+            
+            // Pre-compute caching information to avoid runtime overhead
+            var cacheAttribute = declaration.Attributes.FirstOrDefault(a => string.Equals(a.Name, "cache", StringComparison.OrdinalIgnoreCase));
+            if (cacheAttribute != null)
+            {
+                _isCached = true;
+                _cacheTtlMilliseconds = GetCacheTtl(cacheAttribute);
+            }
+            else
+            {
+                _isCached = false;
+                _cacheTtlMilliseconds = 0;
+            }
         }
 
         public object? Call(Executor executor, List<object?> arguments)
         {
-            // Check for @cache attribute
-            var cacheAttribute = Declaration.Attributes.FirstOrDefault(a => a.Name.ToLower() == "cache");
-            if (cacheAttribute != null)
+            // Fast path for non-cached functions
+            if (!_isCached)
             {
-                // Generate cache key
-                string cacheKey = FunctionCache.GenerateKey(Declaration.Name, arguments);
-                
-                // Try to get cached result
-                if (FunctionCache.TryGet(cacheKey, out object? cachedValue))
-                {
-                    return cachedValue;
-                }
-                
-                // Execute function and cache result
-                object? result = ExecuteFunction(executor, arguments);
-                
-                // Get TTL from attribute parameters
-                long ttlMilliseconds = GetCacheTtl(cacheAttribute);
-                FunctionCache.Set(cacheKey, result, ttlMilliseconds);
-                
-                return result;
-            }
-            else
-            {
-                // No caching, execute normally
                 return ExecuteFunction(executor, arguments);
             }
+            
+            // Cached function path
+            string cacheKey = FunctionCache.GenerateKey(Declaration.Name, arguments);
+            
+            // Try to get cached result
+            if (FunctionCache.TryGet(cacheKey, out object? cachedValue))
+            {
+                return cachedValue;
+            }
+            
+            // Execute function and cache result
+            object? result = ExecuteFunction(executor, arguments);
+            FunctionCache.Set(cacheKey, result, _cacheTtlMilliseconds);
+            
+            return result;
         }
 
         private object? ExecuteFunction(Executor executor, List<object?> arguments)
@@ -2604,10 +2716,10 @@ namespace Shelltrac
             return returnValue;
         }
 
-        private long GetCacheTtl(FunctionAttribute cacheAttribute)
+        private static long GetCacheTtl(FunctionAttribute cacheAttribute)
         {
             // Default TTL is 5 minutes if not specified
-            long defaultTtl = 5 * 60 * 1000; // 5 minutes in milliseconds
+            const long defaultTtl = 5 * 60 * 1000; // 5 minutes in milliseconds
             
             if (cacheAttribute.Parameters.TryGetValue("ttl", out object? ttlValue))
             {
