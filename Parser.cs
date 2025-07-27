@@ -34,6 +34,13 @@ namespace Shelltrac
             // first eat all the ; that may be left over from a previous line
             while (Match(TokenType.SEMICOLON)) { }
 
+            // Check for attributes (e.g., @cache)
+            List<FunctionAttribute>? attributes = null;
+            if (Check(TokenType.AT))
+            {
+                attributes = ParseAttributes();
+            }
+
             if (Match(TokenType.TASK))
                 return ParseTask();
             if (Match(TokenType.ON))
@@ -62,7 +69,18 @@ namespace Shelltrac
             }
 
             if (Match(TokenType.FN))
-                return ParseFunction();
+                return ParseFunction(attributes);
+            
+            // If we have attributes but no function, that's an error
+            if (attributes != null)
+            {
+                throw new ParsingException(
+                    "Attributes can only be applied to function declarations",
+                    Peek().Line,
+                    Peek().Column
+                );
+            }
+            
             if (Match(TokenType.RETURN))
                 return ParseReturnOrLoopYield(this.inParallelLoop);
             // Attempt to parse an assignment statement:
@@ -96,7 +114,7 @@ namespace Shelltrac
             );
         }
 
-        private Stmt ParseFunction()
+        private Stmt ParseFunction(List<FunctionAttribute>? attributes = null)
         {
             var nameToken = Consume(TokenType.IDENTIFIER, "Expected function name after 'fn'");
             string functionName = nameToken.Lexeme;
@@ -114,7 +132,84 @@ namespace Shelltrac
             Consume(TokenType.RPAREN, "Expected ')' after parameter list"); // Adjust token types if you introduce LPAREN/RPAREN.
 
             var body = ParseBlock();
-            return new FunctionStmt(functionName, parameters, body);
+            return new FunctionStmt(functionName, parameters, body, attributes);
+        }
+
+        private List<FunctionAttribute> ParseAttributes()
+        {
+            var attributes = new List<FunctionAttribute>();
+            
+            while (Match(TokenType.AT))
+            {
+                var nameToken = Consume(TokenType.IDENTIFIER, "Expected attribute name after '@'");
+                string attributeName = nameToken.Lexeme;
+                
+                var parameters = new Dictionary<string, object?>();
+                
+                // Check for attribute parameters: @cache(ttl: 5m)
+                if (Match(TokenType.LPAREN))
+                {
+                    if (!Check(TokenType.RPAREN))
+                    {
+                        do
+                        {
+                            var paramName = Consume(TokenType.IDENTIFIER, "Expected parameter name").Lexeme;
+                            Consume(TokenType.COLON, "Expected ':' after parameter name");
+                            
+                            // Parse the parameter value (can be a literal, time literal, etc.)
+                            object? paramValue = ParseAttributeValue();
+                            parameters[paramName] = paramValue;
+                            
+                        } while (Match(TokenType.COMMA));
+                    }
+                    Consume(TokenType.RPAREN, "Expected ')' after attribute parameters");
+                }
+                
+                attributes.Add(new FunctionAttribute(attributeName, parameters));
+            }
+            
+            return attributes;
+        }
+
+        private object? ParseAttributeValue()
+        {
+            if (Match(TokenType.NUMBER))
+            {
+                return int.Parse(Previous().Lexeme);
+            }
+            else if (Match(TokenType.TIME_LITERAL))
+            {
+                string timeLiteral = Previous().Lexeme;
+                // Parse the time literal (e.g., "5m" -> value=5, unit="m")
+                int i = 0;
+                while (i < timeLiteral.Length && char.IsDigit(timeLiteral[i]))
+                {
+                    i++;
+                }
+                int value = int.Parse(timeLiteral.Substring(0, i));
+                string unit = timeLiteral.Substring(i);
+                return new TimeLiteralExpr(value, unit);
+            }
+            else if (Match(TokenType.STRING))
+            {
+                return Previous().Lexeme;
+            }
+            else if (Match(TokenType.TRUE))
+            {
+                return true;
+            }
+            else if (Match(TokenType.FALSE))
+            {
+                return false;
+            }
+            else
+            {
+                throw new ParsingException(
+                    $"Unexpected token in attribute value: {Peek().Lexeme}",
+                    Peek().Line,
+                    Peek().Column
+                );
+            }
         }
 
         private Stmt ParseReturn()
@@ -791,6 +886,19 @@ namespace Shelltrac
             if (Match(TokenType.NUMBER))
             {
                 return new LiteralExpr(Int32.Parse(Previous().Lexeme));
+            }
+            if (Match(TokenType.TIME_LITERAL))
+            {
+                string timeLiteral = Previous().Lexeme;
+                // Parse the time literal (e.g., "5m" -> value=5, unit="m")
+                int i = 0;
+                while (i < timeLiteral.Length && char.IsDigit(timeLiteral[i]))
+                {
+                    i++;
+                }
+                int value = int.Parse(timeLiteral.Substring(0, i));
+                string unit = timeLiteral.Substring(i);
+                return new TimeLiteralExpr(value, unit);
             }
             if (Match(TokenType.TRUE))
             {

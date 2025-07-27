@@ -13,6 +13,69 @@ using System.Threading.Tasks;
 
 namespace Shelltrac
 {
+    // Caching infrastructure for @cache attribute
+    public class CacheEntry
+    {
+        public object? Value { get; }
+        public DateTime ExpiryTime { get; }
+        public bool IsExpired => DateTime.UtcNow > ExpiryTime;
+
+        public CacheEntry(object? value, long ttlMilliseconds)
+        {
+            Value = value;
+            ExpiryTime = DateTime.UtcNow.AddMilliseconds(ttlMilliseconds);
+        }
+    }
+
+    public static class FunctionCache
+    {
+        private static readonly ConcurrentDictionary<string, CacheEntry> _cache = new();
+
+        public static bool TryGet(string key, out object? value)
+        {
+            value = null;
+            if (_cache.TryGetValue(key, out var entry))
+            {
+                if (!entry.IsExpired)
+                {
+                    value = entry.Value;
+                    return true;
+                }
+                else
+                {
+                    // Remove expired entry
+                    _cache.TryRemove(key, out _);
+                }
+            }
+            return false;
+        }
+
+        public static void Set(string key, object? value, long ttlMilliseconds)
+        {
+            _cache[key] = new CacheEntry(value, ttlMilliseconds);
+        }
+
+        public static void Clear()
+        {
+            _cache.Clear();
+        }
+
+        // Generate cache key from function name and arguments
+        public static string GenerateKey(string functionName, List<object?> arguments)
+        {
+            var keyBuilder = new StringBuilder();
+            keyBuilder.Append(functionName);
+            keyBuilder.Append('(');
+            for (int i = 0; i < arguments.Count; i++)
+            {
+                if (i > 0) keyBuilder.Append(',');
+                keyBuilder.Append(arguments[i]?.ToString() ?? "null");
+            }
+            keyBuilder.Append(')');
+            return keyBuilder.ToString();
+        }
+    }
+
     public class ExecutionScope
     {
         // Variable storage - now immutable
@@ -2337,6 +2400,13 @@ namespace Shelltrac
             return map;
         }
 
+        public object? Visit(TimeLiteralExpr expr)
+        {
+            // Return the TimeLiteralExpr itself so it can be used in variable assignments
+            // and also provide the milliseconds value for calculations
+            return expr;
+        }
+
         #endregion
 
         #region Error Context Methods
@@ -2477,6 +2547,37 @@ namespace Shelltrac
 
         public object? Call(Executor executor, List<object?> arguments)
         {
+            // Check for @cache attribute
+            var cacheAttribute = Declaration.Attributes.FirstOrDefault(a => a.Name.ToLower() == "cache");
+            if (cacheAttribute != null)
+            {
+                // Generate cache key
+                string cacheKey = FunctionCache.GenerateKey(Declaration.Name, arguments);
+                
+                // Try to get cached result
+                if (FunctionCache.TryGet(cacheKey, out object? cachedValue))
+                {
+                    return cachedValue;
+                }
+                
+                // Execute function and cache result
+                object? result = ExecuteFunction(executor, arguments);
+                
+                // Get TTL from attribute parameters
+                long ttlMilliseconds = GetCacheTtl(cacheAttribute);
+                FunctionCache.Set(cacheKey, result, ttlMilliseconds);
+                
+                return result;
+            }
+            else
+            {
+                // No caching, execute normally
+                return ExecuteFunction(executor, arguments);
+            }
+        }
+
+        private object? ExecuteFunction(Executor executor, List<object?> arguments)
+        {
             // Create new environment from immutable closure
             var localEnv = Closure.ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
             for (int i = 0; i < Declaration.Parameters.Count; i++)
@@ -2501,6 +2602,26 @@ namespace Shelltrac
                 executor.PopEnvironment();
             }
             return returnValue;
+        }
+
+        private long GetCacheTtl(FunctionAttribute cacheAttribute)
+        {
+            // Default TTL is 5 minutes if not specified
+            long defaultTtl = 5 * 60 * 1000; // 5 minutes in milliseconds
+            
+            if (cacheAttribute.Parameters.TryGetValue("ttl", out object? ttlValue))
+            {
+                if (ttlValue is TimeLiteralExpr timeLiteral)
+                {
+                    return timeLiteral.TotalMilliseconds;
+                }
+                else if (ttlValue is int intValue)
+                {
+                    return intValue; // Assume milliseconds
+                }
+            }
+            
+            return defaultTtl;
         }
     }
 

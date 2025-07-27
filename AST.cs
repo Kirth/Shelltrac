@@ -107,12 +107,14 @@ namespace Shelltrac
         public string Name { get; }
         public List<string> Parameters { get; }
         public List<Stmt> Body { get; }
+        public List<FunctionAttribute> Attributes { get; }
 
-        public FunctionStmt(string name, List<string> parameters, List<Stmt> body)
+        public FunctionStmt(string name, List<string> parameters, List<Stmt> body, List<FunctionAttribute>? attributes = null)
         {
             Name = name;
             Parameters = parameters;
             Body = body;
+            Attributes = attributes ?? new List<FunctionAttribute>();
         }
         
         public override void Accept(IStmtVisitor visitor) => visitor.Visit(this);
@@ -569,5 +571,47 @@ namespace Shelltrac
         }
         
         public override T Accept<T>(IExprVisitor<T> visitor) => visitor.Visit(this);
+    }
+
+    public class TimeLiteralExpr : Expr
+    {
+        public int Value { get; }
+        public string Unit { get; }
+        public long TotalMilliseconds { get; }
+
+        public TimeLiteralExpr(int value, string unit)
+        {
+            Value = value;
+            Unit = unit.ToLower();
+            TotalMilliseconds = CalculateMilliseconds(value, Unit);
+        }
+
+        private static long CalculateMilliseconds(int value, string unit)
+        {
+            return unit switch
+            {
+                "ms" => value,
+                "s" => value * 1000L,
+                "m" => value * 60L * 1000L,
+                "h" => value * 60L * 60L * 1000L,
+                "d" => value * 24L * 60L * 60L * 1000L,
+                _ => throw new System.ArgumentException($"Invalid time unit: {unit}")
+            };
+        }
+
+        public override T Accept<T>(IExprVisitor<T> visitor) => visitor.Visit(this);
+    }
+
+    // Attribute system for functions
+    public class FunctionAttribute
+    {
+        public string Name { get; }
+        public Dictionary<string, object?> Parameters { get; }
+
+        public FunctionAttribute(string name, Dictionary<string, object?> parameters)
+        {
+            Name = name;
+            Parameters = parameters;
+        }
     }
 }

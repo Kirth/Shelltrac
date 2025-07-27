@@ -37,5 +37,6 @@ namespace Shelltrac
         T Visit(ArrayExpr expr);
         T Visit(IndexExpr expr);
         T Visit(DictExpr expr);
+        T Visit(TimeLiteralExpr expr);
     }
 }

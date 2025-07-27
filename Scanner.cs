@@ -66,6 +66,7 @@ namespace Shelltrac
 
         VERBATIM_STRING, // For @"..." strings with no interpolation
         NUMBER,
+        TIME_LITERAL, // For time literals like 5m, 30s, 1h
         IDENTIFIER,
         EOF,
 
@@ -522,6 +523,33 @@ namespace Shelltrac
             while (!IsAtEnd() && IsDigit(Peek()))
             {
                 Advance();
+            }
+            
+            // Check for time suffixes: ms, s, m, h, d
+            if (!IsAtEnd() && IsAlpha(Peek()))
+            {
+                int timeSuffixStart = _current;
+                while (!IsAtEnd() && IsAlpha(Peek()))
+                {
+                    Advance();
+                }
+                
+                var suffixSpan = _source.AsSpan(timeSuffixStart, _current - timeSuffixStart);
+                string suffix = suffixSpan.ToString().ToLower();
+                
+                // Check if it's a valid time suffix
+                if (suffix == "ms" || suffix == "s" || suffix == "m" || suffix == "h" || suffix == "d")
+                {
+                    // Extract the full time literal span
+                    var timeLiteralSpan = _source.AsSpan(startPos, _current - startPos);
+                    AddToken(TokenType.TIME_LITERAL, timeLiteralSpan.ToString());
+                    return;
+                }
+                else
+                {
+                    // Not a time suffix, rewind and treat as separate tokens
+                    _current = timeSuffixStart;
+                }
             }
             
             // Extract the number span directly
