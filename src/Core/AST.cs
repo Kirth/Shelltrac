@@ -330,6 +330,17 @@ namespace Shelltrac
             Arguments = arguments;
         }
         
+        public bool IsUfcsCandidate => Callee is MemberAccessExpr;
+        
+        public (Expr Object, string MethodName)? GetUfcsInfo()
+        {
+            if (Callee is MemberAccessExpr memberAccess)
+            {
+                return (memberAccess.Object, memberAccess.MemberName);
+            }
+            return null;
+        }
+        
         public override T Accept<T>(IExprVisitor<T> visitor) => visitor.Visit(this);
     }
 

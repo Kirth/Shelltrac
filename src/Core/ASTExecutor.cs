@@ -1207,12 +1207,40 @@ namespace Shelltrac
 
                 case MemberType.None:
                 default:
+                    // Try UFCS resolution before giving up
+                    var ufcsCallable = TryResolveUFCS(parent, memberName);
+                    if (ufcsCallable != null)
+                    {
+                        return ufcsCallable;
+                    }
+                    
                     throw new RuntimeException(
                         $"Member '{memberName}' not found on object of type {type.Name}",
                         _context.CurrentLocation.Line,
                         _context.CurrentLocation.Column
                     );
             }
+        }
+
+        private Callable? TryResolveUFCS(object target, string memberName)
+        {
+            // Look for a function with the given name in the current context
+            try
+            {
+                var function = _context.LookupVariable(memberName);
+                if (function is Callable callable)
+                {
+                    // Check if this function can accept the target as its first parameter
+                    // For now, we'll assume it can and let the actual call handle type checking
+                    return new UFCSCallable(target, callable);
+                }
+            }
+            catch (RuntimeException)
+            {
+                // Function not found in scope, continue with normal error handling
+            }
+            
+            return null;
         }
 
         private object EvalBinary(BinaryExpr bin)
@@ -1240,6 +1268,8 @@ namespace Shelltrac
                     return MultiplyValues(leftVal, rightVal, bin.Line, bin.Column);
                 case "/":
                     return DivideValues(leftVal, rightVal, bin.Line, bin.Column);
+                case "%":
+                    return ModuloValues(leftVal, rightVal, bin.Line, bin.Column);
                 case "-":
                     return SubtractValues(leftVal, rightVal, bin.Line, bin.Column);
                 default:
@@ -2213,6 +2243,21 @@ namespace Shelltrac
             throw typeErrorContext.CreateRuntimeException($"Cannot divide {left} and {right} - expected numeric values");
         }
 
+        private object ModuloValues(object left, object right, int line = 0, int column = 0)
+        {
+            if (left is int li && right is int ri)
+            {
+                if (ri == 0)
+                {
+                    var modZeroContext = CreateErrorContext(line, column);
+                    throw modZeroContext.CreateRuntimeException("Modulo by zero");
+                }
+                return li % ri;
+            }
+            var typeErrorContext = CreateErrorContext(line, column);
+            throw typeErrorContext.CreateRuntimeException($"Cannot calculate modulo of {left} and {right} - expected numeric values");
+        }
+
         private object SubtractValues(object left, object right, int line = 0, int column = 0)
         {
             if (left is int li && right is int ri)
@@ -2850,6 +2895,28 @@ namespace Shelltrac
                     innerException: tie.InnerException
                 );
             }
+        }
+    }
+
+    public class UFCSCallable : Callable
+    {
+        private readonly object _target;
+        private readonly Callable _function;
+
+        public UFCSCallable(object target, Callable function)
+        {
+            _target = target;
+            _function = function;
+        }
+
+        public object? Call(Executor executor, List<object?> arguments)
+        {
+            // Create new argument list with target as first parameter
+            var ufcsArgs = new List<object?> { _target };
+            ufcsArgs.AddRange(arguments);
+            
+            // Call the underlying function with target as first argument
+            return _function.Call(executor, ufcsArgs);
         }
     }
 }

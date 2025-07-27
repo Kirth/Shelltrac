@@ -48,6 +48,7 @@ namespace Shelltrac
         PLUS, // +
         STAR, // *
         SLASH, // /
+        PERCENT, // %
         MINUS, // -
         LESS, // <
         EQUAL_EQUAL, // ==
@@ -260,6 +261,9 @@ namespace Shelltrac
 
                 case '/':
                     AddToken(TokenType.SLASH, "/");
+                    break;
+                case '%':
+                    AddToken(TokenType.PERCENT, "%");
                     break;
                 case '*':
                     AddToken(TokenType.STAR, "*");

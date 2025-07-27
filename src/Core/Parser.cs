@@ -849,9 +849,9 @@ namespace Shelltrac
         private Expr ParseFactor()
         {
             var expr = ParseUnary();
-            while (Match(TokenType.STAR, TokenType.SLASH))
+            while (Match(TokenType.STAR, TokenType.SLASH, TokenType.PERCENT))
             {
-                var op = Previous().Lexeme; // "*" or "/"
+                var op = Previous().Lexeme; // "*", "/", or "%"
                 var right = ParseUnary();
                 expr = new BinaryExpr(expr, op, right);
             }
